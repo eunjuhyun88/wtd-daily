@@ -1,7 +1,6 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
-const BINANCE = 'https://api.binance.com';
 const VALID = /^[A-Z0-9]{2,20}$/;
 
 interface SparklineData {
@@ -12,23 +11,28 @@ interface SparklineData {
   volume: number;
 }
 
-async function fetchKlines(symbol: string): Promise<SparklineData | null> {
+// Bybit v5 spot klines (Binance is geo-blocked on Vercel)
+async function fetchBybit(symbol: string): Promise<SparklineData | null> {
   try {
-    const url = `${BINANCE}/api/v3/klines?symbol=${symbol}&interval=1h&limit=24`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const url = `https://api.bybit.com/v5/market/kline?category=spot&symbol=${symbol}&interval=60&limit=24`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { Accept: 'application/json' } });
     if (!res.ok) return null;
     const data = await res.json();
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const prices = data.map((k: unknown[]) => parseFloat(String(k[4])));
-    const highs = data.map((k: unknown[]) => parseFloat(String(k[2])));
-    const lows = data.map((k: unknown[]) => parseFloat(String(k[3])));
-    const volumes = data.map((k: unknown[]) => parseFloat(String(k[5])));
+    // Bybit returns: [[startTime, open, high, low, close, volume, turnover], ...]
+    // listed newest first → reverse
+    const list: string[][] = data?.result?.list ?? [];
+    if (!list.length) return null;
+    const reversed = [...list].reverse();
+    const prices = reversed.map(k => parseFloat(k[4])); // close
+    const highs  = reversed.map(k => parseFloat(k[2]));
+    const lows   = reversed.map(k => parseFloat(k[3]));
+    const vols   = reversed.map(k => parseFloat(k[5]));
     return {
       symbol,
       prices,
       high: Math.max(...highs),
       low: Math.min(...lows),
-      volume: volumes.reduce((a, b) => a + b, 0),
+      volume: vols.reduce((a, b) => a + b, 0),
     };
   } catch {
     return null;
@@ -45,7 +49,7 @@ export const GET: RequestHandler = async ({ url }) => {
 
   if (symbols.length === 0) return json({ error: 'symbols required' }, { status: 400 });
 
-  const results = await Promise.allSettled(symbols.map(fetchKlines));
+  const results = await Promise.allSettled(symbols.map(fetchBybit));
   const sparklines: Record<string, SparklineData> = {};
   for (const r of results) {
     if (r.status === 'fulfilled' && r.value) sparklines[r.value.symbol] = r.value;

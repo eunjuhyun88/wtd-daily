@@ -12,7 +12,7 @@ function setCache(key: string, data: unknown) {
   cache.set(key, { data, expiresAt: Date.now() + CACHE_TTL });
 }
 
-async function safeJson(url: string, timeoutMs = 5000): Promise<unknown | null> {
+async function safeJson(url: string, timeoutMs = 6000): Promise<unknown | null> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs), headers: { Accept: 'application/json' } });
     if (!res.ok) return null;
@@ -27,29 +27,29 @@ export const GET: RequestHandler = async () => {
   if (cached) return json(cached, { headers: { 'Cache-Control': 'public, s-maxage=60' } });
 
   try {
-    const [upbit, binance, forex] = await Promise.all([
+    const [upbit, coingecko, forex] = await Promise.all([
       safeJson('https://api.upbit.com/v1/ticker?markets=KRW-BTC'),
-      safeJson('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'),
-      // Use open exchange rate API (free, no key)
+      // CoinGecko simple price — no key needed
+      safeJson('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd'),
       safeJson('https://open.er-api.com/v6/latest/USD'),
     ]);
 
-    const upbitPrice = (upbit as Array<{ trade_price?: number }>)?.[0]?.trade_price;
-    const binancePrice = parseFloat((binance as { price?: string })?.price ?? '0');
-    const usdKrw = (forex as { rates?: { KRW?: number } })?.rates?.KRW ?? null;
+    const upbitPrice: number | undefined = (upbit as Array<{ trade_price?: number }>)?.[0]?.trade_price;
+    const btcUsd: number | undefined = (coingecko as { bitcoin?: { usd?: number } })?.bitcoin?.usd;
+    const usdKrw: number | undefined = (forex as { rates?: { KRW?: number } })?.rates?.KRW ?? undefined;
 
-    if (!upbitPrice || !binancePrice || !usdKrw) {
-      return json({ ok: false, error: 'data unavailable', debug: { upbitPrice, binancePrice, usdKrw } }, { status: 502 });
+    if (!upbitPrice || !btcUsd || !usdKrw) {
+      return json({ ok: false, error: 'data unavailable' }, { status: 502 });
     }
 
-    const binancePriceKrw = binancePrice * usdKrw;
-    const premiumPct = ((upbitPrice / binancePriceKrw) - 1) * 100;
+    const btcUsdInKrw = btcUsd * usdKrw;
+    const premiumPct = ((upbitPrice / btcUsdInKrw) - 1) * 100;
 
     const payload = {
       ok: true,
       data: {
         premium_pct: premiumPct,
-        binance_btc_usdt: binancePrice,
+        binance_btc_usdt: btcUsd,
         upbit_btc_krw: upbitPrice,
         usd_krw: usdKrw,
         ts: Date.now(),
