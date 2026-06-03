@@ -1219,129 +1219,73 @@
     generatedAt={data.generatedAt}
   />
 
-  <DailyIntro
-    showSignIn={!isAuthenticated}
-    onSignIn={() => openWalletModal()}
-    {regimeChip}
-    confluenceScore={confluence?.score}
-    {biggestMover}
-    {nearestEvent}
-    {fmtPct}
-    {fmtPrice}
-  />
-
-  <section id="briefing" class="daily-workbench anchor-target" aria-label="Daily decision workspace">
-    <div class="workbench-main">
-      <HeadlineCard
-        regime={confluence?.regime}
-        score={confluence?.score}
-        confidence={confluence?.confidence}
-        btcChangePct={btcPulse?.changePct}
-        feargreed={fgPulse}
-        generatedAt={data.generatedAt}
-      />
-
-      <section id="market-board" class="dense-board" aria-label="Daily data board">
-        <div class="board-head">
-          <div>
-            <h2>Daily Board</h2>
-            <p>{activeTabContext.title} · {activeTabContext.primary}</p>
-          </div>
-          <span class="board-status">{boardStatus}</span>
+  <!-- ── Regime Hero ─────────────────────────────────────────────── -->
+  <header class="regime-hero" data-tone={regimeChip.tone}>
+    <div class="rh-left">
+      <div class="rh-badge" data-tone={regimeChip.tone}>{regimeChip.label}</div>
+      {#if btcPulse?.price != null}
+        <div class="rh-btc">
+          <span class="rh-price">BTC ${fmtPrice(btcPulse.price)}</span>
+          {#if btcPulse.changePct != null}
+            <span class="rh-delta" style:color={pctColor(btcPulse.changePct)}>
+              {btcPulse.changePct > 0 ? '+' : ''}{fmtPct(btcPulse.changePct)} 24h
+            </span>
+          {/if}
         </div>
-        <div class="board-tabs" role="tablist" aria-label="Daily data tabs">
-          {#each denseTabs as tab (tab.id)}
-            <button
-              type="button"
-              class="board-tab"
-              class:active={denseTab === tab.id}
-              role="tab"
-              aria-selected={denseTab === tab.id}
-              onclick={() => { denseTab = tab.id; }}
-            >
-              {tab.label}
-            </button>
-          {/each}
-        </div>
-        <div class="board-table" role="table" aria-label="{denseTab} data">
-          <div class="board-row board-row-head" role="row">
-            <span role="columnheader">Item</span>
-            <span role="columnheader">Value</span>
-            <span role="columnheader">Change</span>
-            <span role="columnheader">Context</span>
-          </div>
-          {#each activeDenseRows as row, i (`${row.label}-${row.value}-${i}`)}
-            {#if row.href}
-              <a
-                class="board-row"
-                role="row"
-                href={row.href}
-                target={row.href.startsWith('http') ? '_blank' : undefined}
-                rel={row.href.startsWith('http') ? 'noopener noreferrer' : undefined}
-              >
-                <span class="board-label" role="cell">
-                  <strong>{row.label}</strong>
-                  {#if row.sub}<em>{row.sub}</em>{/if}
-                </span>
-                <span class="board-value" role="cell">{row.value}</span>
-                <span
-                  class="board-delta"
-                  class:muted={row.delta == null}
-                  role="cell"
-                  style:color={row.delta == null ? 'var(--d-mute)' : pctColor(row.delta)}
-                >
-                  {row.delta == null ? '—' : fmtPct(row.delta)}
-                </span>
-                <span class="board-meta" role="cell">{row.meta ?? 'open'}</span>
-              </a>
-            {:else}
-              <div class="board-row" role="row">
-                <span class="board-label" role="cell">
-                  <strong>{row.label}</strong>
-                  {#if row.sub}<em>{row.sub}</em>{/if}
-                </span>
-                <span class="board-value" role="cell">{row.value}</span>
-                <span
-                  class="board-delta"
-                  class:muted={row.delta == null}
-                  role="cell"
-                  style:color={row.delta == null ? 'var(--d-mute)' : pctColor(row.delta)}
-                >
-                  {row.delta == null ? '—' : fmtPct(row.delta)}
-                </span>
-                <span class="board-meta" role="cell">{row.meta ?? 'live'}</span>
-              </div>
-            {/if}
-          {/each}
-        </div>
-      </section>
+      {:else}
+        <div class="rh-btc"><span class="rh-price">BTC —</span></div>
+      {/if}
     </div>
-
-    <aside class="workbench-side" aria-label="Selected board context">
-      <section class="selection-card selection-{activeTabContext.tone}">
-        <span class="selection-eyebrow">{activeTabContext.eyebrow}</span>
-        <h2>{activeTabContext.title}</h2>
-        <p>{activeTabContext.body}</p>
-        <div class="selection-grid">
-          <span>
-            <em>Primary</em>
-            <strong>{activeTabContext.primary}</strong>
-          </span>
-          <span>
-            <em>Next</em>
-            <strong>{activeTabContext.secondary}</strong>
-          </span>
+    <div class="rh-stats">
+      {#if fgPulse}
+        <div class="rhs">
+          <span class="rhs-l">F&amp;G</span>
+          <span class="rhs-v" style:color={fgColor(fgPulse.value)}>{fgPulse.value}</span>
+          <span class="rhs-s">{fgLabel(fgPulse.value)}</span>
         </div>
-      </section>
-      <ThisWeekWatchlist events={thisWeekMacroEvents} issues={watchlistIssues} />
-    </aside>
-  </section>
-
-  <!-- ── Removed: Confluence regime banner ───────────────────────────────
-       Pure duplicate of HeadlineCard above — same regime tag, same score,
-       same confidence. Keeping both forced the user to read the same data
-       twice in 200px of vertical space. The streak/divergence stats moved
-       inside HeadlineCard's row in a follow-up commit. ── -->
+      {/if}
+      {#if flip?.currentRate != null}
+        <div class="rhs">
+          <span class="rhs-l">Funding</span>
+          <span class="rhs-v" style:color={pctColor(flip.currentRate * 100)}>{(flip.currentRate * 100).toFixed(4)}%</span>
+          <span class="rhs-s">{fundingDirectionLabel(flip.direction) || 'BTC perp'}</span>
+        </div>
+      {/if}
+      {#if options?.putCallRatioOi != null}
+        <div class="rhs">
+          <span class="rhs-l">PCR</span>
+          <span class="rhs-v">{options.putCallRatioOi.toFixed(2)}</span>
+          <span class="rhs-s">{options.putCallRatioOi < 0.7 ? '강세' : options.putCallRatioOi > 1.0 ? '약세' : '중립'}</span>
+        </div>
+      {/if}
+      {#if kimchiPulse?.premium_pct != null}
+        <div class="rhs">
+          <span class="rhs-l">Kimchi</span>
+          <span class="rhs-v" style:color={pctColor(kimchiPulse.premium_pct)}>{fmtPct(kimchiPulse.premium_pct)}</span>
+          <span class="rhs-s">KR premium</span>
+        </div>
+      {/if}
+      {#if onchain?.onchainMetrics?.mvrv != null}
+        <div class="rhs">
+          <span class="rhs-l">MVRV</span>
+          <span class="rhs-v">{onchain.onchainMetrics.mvrv.toFixed(2)}</span>
+          <span class="rhs-s">{onchain.onchainMetrics.mvrv > 3.5 ? '과열' : onchain.onchainMetrics.mvrv < 1 ? '저평가' : '정상'}</span>
+        </div>
+      {/if}
+      {#if macroPulse?.dxy?.price != null}
+        <div class="rhs">
+          <span class="rhs-l">DXY</span>
+          <span class="rhs-v">{fmtNum(macroPulse.dxy.price, 2)}</span>
+          {#if macroPulse.dxy.changePct != null}
+            <span class="rhs-s" style:color={pctColor(-macroPulse.dxy.changePct)}>{fmtPct(macroPulse.dxy.changePct)}</span>
+          {/if}
+        </div>
+      {/if}
+    </div>
+    <div class="rh-time">
+      <span>Updated {new Date(data.generatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
+    </div>
+  </header>
 
   <TopCoinBoard
     {topCoins}
@@ -1357,10 +1301,52 @@
   />
 
   <main id="daily-data" class="grid">
-    <div id="markets" class="section-label">
-      <span>Markets</span>
-      <em>Sentiment, Korean/US equity tape, commodities, and crypto structure</em>
-    </div>
+    <!-- Card: Crypto indicators -->
+    <section class="card card-crypto" aria-label="Crypto indicators">
+      <div class="card-h">
+        <span class="card-title">Crypto Indicators</span>
+        <span class="card-meta">
+          <span class="src-chip">Mempool · Bybit</span>
+          <span class="card-sub">Premium · Funding · Network</span>
+        </span>
+      </div>
+      <div class="market-grid">
+        {#if kimchi?.premium_pct != null}
+          <div class="metric">
+            <div class="metric-l">Kimchi Premium</div>
+            <div class="metric-v" style:color={pctColor(kimchi.premium_pct)}>{fmtPct(kimchi.premium_pct)}</div>
+          </div>
+        {/if}
+        {#if flip?.currentRate != null}
+          <div class="metric">
+            <div class="metric-l">BTC Funding</div>
+            <div class="metric-v" style:color={pctColor(flip.currentRate * 100)}>{(flip.currentRate * 100).toFixed(4)}%</div>
+            {#if flip.direction}
+              <div class="metric-sub">
+                {fundingDirectionLabel(flip.direction)}
+                {#if flip.persistedHours != null && flip.persistedHours > 0}· {fmtHours(flip.persistedHours)}{/if}
+              </div>
+            {/if}
+          </div>
+        {/if}
+        {#if thermo?.fastestFee != null}
+          <div class="metric">
+            <div class="metric-l">BTC Fees</div>
+            <div class="metric-v">{thermo.fastestFee} <span class="metric-unit">sat/vB</span></div>
+          </div>
+        {/if}
+        {#if thermo?.mempoolPending != null}
+          <div class="metric">
+            <div class="metric-l">Mempool</div>
+            <div class="metric-v">{compactNum(thermo.mempoolPending)}</div>
+            <div class="metric-sub">pending tx</div>
+          </div>
+        {/if}
+      </div>
+    </section>
+
+    <div bind:this={deepTriggerEl} class="io-sentinel" aria-hidden="true"></div>
+
     <!-- Card: Fear & Greed + 14d sparkbar -->
     <section class="card card-feargreed" aria-label="Fear &amp; Greed index">
       <div class="card-h">
@@ -1403,13 +1389,6 @@
         <div class="empty">No data</div>
       {/if}
     </section>
-
-    <!-- (Macro DXY/SPX/US10Y consolidated into PulseStrip — W-0501 PR1.5b) -->
-
-    <div id="macro" class="section-label">
-      <span>Macro</span>
-      <em>Indices, mega-cap equities, and cross-asset pressure points</em>
-    </div>
 
     <!-- Card: KR Indices (KOSPI/KOSDAQ) -->
     <section class="card card-kr" aria-label="Korean indices">
@@ -1465,227 +1444,6 @@
         <div class="empty">No index data</div>
       {/if}
     </section>
-
-    <!-- Removed L6 inline SignupWall (KR Indices → portfolio email).
-         All 4 inline conversion walls (L3/L4/L5/L6) were sandwiched between
-         data cards, giving the page a 1:1 data:CTA cadence that broke flow.
-         A single L7 sticky at scroll ≥80% (already auth-gated) covers email
-         capture at the right moment without interrupting the scan. -->
-
-    <!-- Card: KR Top 10 stocks -->
-    <section class="card card-stocks" aria-label="Top 10 Korean stocks">
-      <div class="card-h">
-        <span class="card-title">Korean Top 10</span>
-        <span class="card-meta">
-          <span class="src-chip">Yahoo</span>
-          <span class="card-sub">By KOSPI mcap</span>
-        </span>
-      </div>
-      {#if krStocks.length > 0}
-        <ul class="stock-list">
-          {#each krStocks as s (s.symbol)}
-            <li class="stock-row">
-              <span class="stock-name">{s.name}</span>
-              <span class="stock-price">{fmtKrwPrice(s.price)}</span>
-              <span class="row-spark" aria-hidden="true">
-                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
-                  <path d={rowSparkArea(s.spark)} fill={rowSparkColor(s.spark)} fill-opacity="0.12" />
-                  <path d={rowSparkPath(s.spark)} stroke={rowSparkColor(s.spark)} stroke-width="1.2" fill="none" />
-                </svg>
-              </span>
-              <span class="stock-c" style:color={pctColor(s.changePct)}>
-                <span class="delta-bar" style:width={deltaBarWidth(s.changePct)} style:background={pctColor(s.changePct)}></span>
-                {fmtPct(s.changePct)}
-              </span>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        {#if secondaryStatus === 'loading'}
-          <div class="skel-rows">
-            {#each [80, 65, 75, 60, 70] as w}
-              <span class="skel-line" style:width="{w}%"></span>
-            {/each}
-          </div>
-        {:else}
-          <div class="empty">No data</div>
-        {/if}
-      {/if}
-    </section>
-
-    <!-- Card: US Top stocks (MAG7) -->
-    <section class="card card-stocks" aria-label="US top stocks">
-      <div class="card-h">
-        <span class="card-title">US Magnificent 7</span>
-        <span class="card-meta">
-          <span class="src-chip">Yahoo</span>
-          <span class="card-sub">Mega-cap tech</span>
-        </span>
-      </div>
-      {#if usStocks.length > 0}
-        <ul class="stock-list">
-          {#each usStocks as s (s.symbol)}
-            <li class="stock-row">
-              <span class="stock-tic">{s.symbol}</span>
-              <span class="stock-name us-name">{s.name}</span>
-              <span class="stock-price">${fmtPrice(s.price)}</span>
-              <span class="row-spark" aria-hidden="true">
-                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
-                  <path d={rowSparkArea(s.spark)} fill={rowSparkColor(s.spark)} fill-opacity="0.12" />
-                  <path d={rowSparkPath(s.spark)} stroke={rowSparkColor(s.spark)} stroke-width="1.2" fill="none" />
-                </svg>
-              </span>
-              <span class="stock-c" style:color={pctColor(s.changePct)}>
-                <span class="delta-bar" style:width={deltaBarWidth(s.changePct)} style:background={pctColor(s.changePct)}></span>
-                {fmtPct(s.changePct)}
-              </span>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        {#if secondaryStatus === 'loading'}
-          <div class="skel-rows">
-            {#each [80, 65, 75, 60, 70] as w}
-              <span class="skel-line" style:width="{w}%"></span>
-            {/each}
-          </div>
-        {:else}
-          <div class="empty">No data</div>
-        {/if}
-      {/if}
-    </section>
-
-    <!-- Card: Commodities -->
-    <section class="card card-comm" aria-label="Commodities">
-      <div class="card-h">
-        <span class="card-title">Commodities</span>
-        <span class="card-meta">
-          <span class="src-chip">Yahoo Futures</span>
-          <span class="card-sub">Gold · WTI · Silver · Copper</span>
-        </span>
-      </div>
-      {#if commodities?.gold || commodities?.oil || commodities?.silver || commodities?.copper}
-        <ul class="macro-list">
-          {#if commodities?.gold}
-            <li class="macro-row">
-              <span class="macro-l">Gold (oz)</span>
-              <span class="macro-v">${fmtNum(commodities.gold.price, 1)}</span>
-              <span class="row-spark" aria-hidden="true">
-                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
-                  <path d={rowSparkArea(commodities.gold.spark)} fill={rowSparkColor(commodities.gold.spark)} fill-opacity="0.12" />
-                  <path d={rowSparkPath(commodities.gold.spark)} stroke={rowSparkColor(commodities.gold.spark)} stroke-width="1.2" fill="none" />
-                </svg>
-              </span>
-              <span class="macro-c" style:color={pctColor(commodities.gold.changePct)}>
-                <span class="delta-bar" style:width={deltaBarWidth(commodities.gold.changePct)} style:background={pctColor(commodities.gold.changePct)}></span>
-                {fmtPct(commodities.gold.changePct)}
-              </span>
-            </li>
-          {/if}
-          {#if commodities?.oil}
-            <li class="macro-row">
-              <span class="macro-l">WTI Crude</span>
-              <span class="macro-v">${fmtNum(commodities.oil.price, 2)}</span>
-              <span class="row-spark" aria-hidden="true">
-                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
-                  <path d={rowSparkArea(commodities.oil.spark)} fill={rowSparkColor(commodities.oil.spark)} fill-opacity="0.12" />
-                  <path d={rowSparkPath(commodities.oil.spark)} stroke={rowSparkColor(commodities.oil.spark)} stroke-width="1.2" fill="none" />
-                </svg>
-              </span>
-              <span class="macro-c" style:color={pctColor(commodities.oil.changePct)}>
-                <span class="delta-bar" style:width={deltaBarWidth(commodities.oil.changePct)} style:background={pctColor(commodities.oil.changePct)}></span>
-                {fmtPct(commodities.oil.changePct)}
-              </span>
-            </li>
-          {/if}
-          {#if commodities?.silver}
-            <li class="macro-row">
-              <span class="macro-l">Silver</span>
-              <span class="macro-v">${fmtNum(commodities.silver.price, 2)}</span>
-              <span class="row-spark" aria-hidden="true">
-                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
-                  <path d={rowSparkArea(commodities.silver.spark)} fill={rowSparkColor(commodities.silver.spark)} fill-opacity="0.12" />
-                  <path d={rowSparkPath(commodities.silver.spark)} stroke={rowSparkColor(commodities.silver.spark)} stroke-width="1.2" fill="none" />
-                </svg>
-              </span>
-              <span class="macro-c" style:color={pctColor(commodities.silver.changePct)}>
-                <span class="delta-bar" style:width={deltaBarWidth(commodities.silver.changePct)} style:background={pctColor(commodities.silver.changePct)}></span>
-                {fmtPct(commodities.silver.changePct)}
-              </span>
-            </li>
-          {/if}
-          {#if commodities?.copper}
-            <li class="macro-row">
-              <span class="macro-l">Copper</span>
-              <span class="macro-v">${fmtNum(commodities.copper.price, 3)}</span>
-              <span class="row-spark" aria-hidden="true">
-                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
-                  <path d={rowSparkArea(commodities.copper.spark)} fill={rowSparkColor(commodities.copper.spark)} fill-opacity="0.12" />
-                  <path d={rowSparkPath(commodities.copper.spark)} stroke={rowSparkColor(commodities.copper.spark)} stroke-width="1.2" fill="none" />
-                </svg>
-              </span>
-              <span class="macro-c" style:color={pctColor(commodities.copper.changePct)}>
-                <span class="delta-bar" style:width={deltaBarWidth(commodities.copper.changePct)} style:background={pctColor(commodities.copper.changePct)}></span>
-                {fmtPct(commodities.copper.changePct)}
-              </span>
-            </li>
-          {/if}
-        </ul>
-      {:else}
-        <div class="empty">No data</div>
-      {/if}
-    </section>
-
-    <div id="crypto" class="section-label">
-      <span>Crypto</span>
-      <em>Premium, funding, options, onchain, and participant flow</em>
-    </div>
-
-    <!-- Card: Crypto indicators -->
-    <section class="card card-crypto" aria-label="Crypto indicators">
-      <div class="card-h">
-        <span class="card-title">Crypto Indicators</span>
-        <span class="card-meta">
-          <span class="src-chip">Mempool · Bybit</span>
-          <span class="card-sub">Premium · Funding · Network</span>
-        </span>
-      </div>
-      <div class="market-grid">
-        {#if kimchi?.premium_pct != null}
-          <div class="metric">
-            <div class="metric-l">Kimchi Premium</div>
-            <div class="metric-v" style:color={pctColor(kimchi.premium_pct)}>{fmtPct(kimchi.premium_pct)}</div>
-          </div>
-        {/if}
-        {#if flip?.currentRate != null}
-          <div class="metric">
-            <div class="metric-l">BTC Funding</div>
-            <div class="metric-v" style:color={pctColor(flip.currentRate * 100)}>{(flip.currentRate * 100).toFixed(4)}%</div>
-            {#if flip.direction}
-              <div class="metric-sub">
-                {fundingDirectionLabel(flip.direction)}
-                {#if flip.persistedHours != null && flip.persistedHours > 0}· {fmtHours(flip.persistedHours)}{/if}
-              </div>
-            {/if}
-          </div>
-        {/if}
-        {#if thermo?.fastestFee != null}
-          <div class="metric">
-            <div class="metric-l">BTC Fees</div>
-            <div class="metric-v">{thermo.fastestFee} <span class="metric-unit">sat/vB</span></div>
-          </div>
-        {/if}
-        {#if thermo?.mempoolPending != null}
-          <div class="metric">
-            <div class="metric-l">Mempool</div>
-            <div class="metric-v">{compactNum(thermo.mempoolPending)}</div>
-            <div class="metric-sub">pending tx</div>
-          </div>
-        {/if}
-      </div>
-    </section>
-
-    <div bind:this={deepTriggerEl} class="io-sentinel" aria-hidden="true"></div>
 
     <!-- Card: BTC Options -->
     {#if options && (options.putCallRatioOi != null || options.putCallRatioVol != null || options.skew25d != null)}
@@ -1850,104 +1608,37 @@
       </section>
     {/if}
 
-    <!-- Card: Coinbase Premium Index -->
-    {#if coinbasePremium && coinbasePremium.premium_pct != null}
-      <section class="card card-coinbase-premium" aria-label="Coinbase premium index">
-        <div class="card-h">
-          <span class="card-title">Coinbase Premium</span>
-          <span class="card-meta">
-            <span class="src-chip">Coinbase · Binance</span>
-            <span class="card-sub">Institutional flow signal</span>
-          </span>
-        </div>
-        <div class="market-grid">
-          <div class="metric">
-            <div class="metric-l">CPI</div>
-            <div class="metric-v" style:color={pctColor(coinbasePremium.premium_pct ?? 0)}>
-              {(coinbasePremium.premium_pct ?? 0) > 0 ? '+' : ''}{(coinbasePremium.premium_pct ?? 0).toFixed(4)}%
-            </div>
-            {#if coinbasePremium.trend}
-              <div class="metric-sub">{coinbasePremium.trend === 'up' ? '↑ rising' : coinbasePremium.trend === 'down' ? '↓ falling' : '→ flat'}</div>
-            {/if}
+    <!-- Card: Market events (DERIV/WHALE/LIQ) -->
+    <section class="card card-events" aria-label="Market events">
+      <div class="card-h">
+        <span class="card-title">Market Events</span>
+        <span class="card-meta">
+          <span class="src-chip">Live feed</span>
+          <span class="card-sub">DERIV · WHALE · LIQ</span>
+        </span>
+      </div>
+      {#if derivEvents.length > 0}
+        <ul class="event-list">
+          {#each derivEvents as e (e.id)}
+            <li class="event-row">
+              <span class="event-tag" data-level={e.level}>{e.tag}</span>
+              <span class="event-text">{e.text}</span>
+              <span class="event-time">{timeAgo(e.createdAt)}</span>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        {#if secondaryStatus === 'loading'}
+          <div class="skel-rows">
+            {#each [70, 90, 60, 80] as w}
+              <span class="skel-line" style:width="{w}%"></span>
+            {/each}
           </div>
-          {#if coinbasePremium.norm != null}
-            <div class="metric">
-              <div class="metric-l">Z-score</div>
-              <div class="metric-v" style:color={pctColor(coinbasePremium.norm * 10)}>{coinbasePremium.norm.toFixed(2)}</div>
-              <div class="metric-sub">30d rolling</div>
-            </div>
-          {/if}
-        </div>
-      </section>
-    {:else if deepStatus === 'loading'}
-      <section class="card card-coinbase-premium" aria-label="Coinbase premium index">
-        <div class="card-h">
-          <span class="card-title">Coinbase Premium</span>
-          <span class="card-meta"><span class="src-chip">Coinbase · Binance</span></span>
-        </div>
-        <div class="skel-rows">
-          {#each [75, 55, 85, 60] as w}
-            <span class="skel-line" style:width="{w}%"></span>
-          {/each}
-        </div>
-      </section>
-    {/if}
-
-    <!-- Card: CME COT institutional OI -->
-    {#if (cmeCot && cmeCot.btc_oi != null) || (cmeCot && cmeCot.eth_oi != null)}
-      <section class="card card-cme-cot" aria-label="CME COT institutional OI">
-        <div class="card-h">
-          <span class="card-title">CME Institutional OI</span>
-          <span class="card-meta">
-            <span class="src-chip">CFTC</span>
-            <span class="card-sub">
-              {#if cmeCot.report_date}as of {cmeCot.report_date}{:else}Weekly COT{/if}
-            </span>
-          </span>
-        </div>
-        <div class="market-grid">
-          {#if cmeCot.btc_oi != null}
-            <div class="metric">
-              <div class="metric-l">BTC OI</div>
-              <div class="metric-v">{compactNum(cmeCot.btc_oi)} <span class="metric-unit">BTC</span></div>
-              {#if cmeCot.btc_oi_chg != null}
-                <div class="metric-sub" style:color={pctColor(cmeCot.btc_oi_chg)}>
-                  {cmeCot.btc_oi_chg > 0 ? '+' : ''}{compactNum(cmeCot.btc_oi_chg)} WoW
-                </div>
-              {/if}
-            </div>
-          {/if}
-          {#if cmeCot.eth_oi != null}
-            <div class="metric">
-              <div class="metric-l">ETH OI</div>
-              <div class="metric-v">{compactNum(cmeCot.eth_oi)} <span class="metric-unit">ETH</span></div>
-              {#if cmeCot.eth_oi_chg != null}
-                <div class="metric-sub" style:color={pctColor(cmeCot.eth_oi_chg)}>
-                  {cmeCot.eth_oi_chg > 0 ? '+' : ''}{compactNum(cmeCot.eth_oi_chg)} WoW
-                </div>
-              {/if}
-            </div>
-          {/if}
-        </div>
-      </section>
-    {:else if deepStatus === 'loading'}
-      <section class="card card-cme-cot" aria-label="CME COT institutional OI">
-        <div class="card-h">
-          <span class="card-title">CME Institutional OI</span>
-          <span class="card-meta"><span class="src-chip">CFTC</span></span>
-        </div>
-        <div class="skel-rows">
-          {#each [75, 55, 85, 60] as w}
-            <span class="skel-line" style:width="{w}%"></span>
-          {/each}
-        </div>
-      </section>
-    {/if}
-
-    <div id="signals" class="section-label">
-      <span>Signals</span>
-      <em>Patterns, live events, trending DEX flow, and whale positioning</em>
-    </div>
+        {:else}
+          <div class="empty">No recent signals</div>
+        {/if}
+      {/if}
+    </section>
 
     <!-- Card: Alpha patterns -->
     <section class="card card-patterns" aria-label="Top 5 alpha patterns">
@@ -1990,44 +1681,6 @@
       {/if}
     </section>
 
-    <!-- Removed L3 LeverBand. Pattern cards now expose a per-row deep-link
-         to Terminal (added in the follow-up Daily P1 commit), which makes
-         the "open pattern in terminal" action contextual to the actual
-         pattern instead of a generic banner. -->
-
-    <!-- Card: Trending (DEX hot) -->
-    <section class="card card-trending" aria-label="Trending tokens">
-      <div class="card-h">
-        <span class="card-title">Trending DEX</span>
-        <span class="card-meta">
-          <span class="src-chip">DexScreener</span>
-          <span class="card-sub">24h volume</span>
-        </span>
-      </div>
-      {#if dexHot.length > 0}
-        <ul class="trend-list">
-          {#each dexHot as t, i (t.url ?? t.symbol ?? i)}
-            <li class="trend-row">
-              <a href={t.url ?? '#'} target="_blank" rel="noopener noreferrer" class="trend-name">{t.symbol ?? '?'}</a>
-              <span class="trend-chain">{t.chainId ?? ''}</span>
-              <span class="trend-vol">{compactUsd(t.volume24h)}</span>
-              <span class="trend-c" style:color={pctColor(t.change24h)}>{fmtPct(t.change24h)}</span>
-            </li>
-          {/each}
-        </ul>
-      {:else}
-        {#if secondaryStatus === 'loading'}
-          <div class="skel-rows">
-            {#each [85, 60, 75, 50, 90] as w}
-              <span class="skel-line" style:width="{w}%"></span>
-            {/each}
-          </div>
-        {:else}
-          <div class="empty">Trending data is being prepared.</div>
-        {/if}
-      {/if}
-    </section>
-
     <!-- Card: Whale positions -->
     {#if whales.length > 0}
       <section class="card card-whales" aria-label="Whale positions">
@@ -2066,36 +1719,35 @@
       </section>
     {/if}
 
-    <!-- Removed L5 inline SignupWall (Whale → unlock email). See L6 note above. -->
-
-    <!-- Card: Market events (DERIV/WHALE/LIQ) -->
-    <section class="card card-events" aria-label="Market events">
+    <!-- Card: Trending (DEX hot) -->
+    <section class="card card-trending" aria-label="Trending tokens">
       <div class="card-h">
-        <span class="card-title">Market Events</span>
+        <span class="card-title">Trending DEX</span>
         <span class="card-meta">
-          <span class="src-chip">Live feed</span>
-          <span class="card-sub">DERIV · WHALE · LIQ</span>
+          <span class="src-chip">DexScreener</span>
+          <span class="card-sub">24h volume</span>
         </span>
       </div>
-      {#if derivEvents.length > 0}
-        <ul class="event-list">
-          {#each derivEvents as e (e.id)}
-            <li class="event-row">
-              <span class="event-tag" data-level={e.level}>{e.tag}</span>
-              <span class="event-text">{e.text}</span>
-              <span class="event-time">{timeAgo(e.createdAt)}</span>
+      {#if dexHot.length > 0}
+        <ul class="trend-list">
+          {#each dexHot as t, i (t.url ?? t.symbol ?? i)}
+            <li class="trend-row">
+              <a href={t.url ?? '#'} target="_blank" rel="noopener noreferrer" class="trend-name">{t.symbol ?? '?'}</a>
+              <span class="trend-chain">{t.chainId ?? ''}</span>
+              <span class="trend-vol">{compactUsd(t.volume24h)}</span>
+              <span class="trend-c" style:color={pctColor(t.change24h)}>{fmtPct(t.change24h)}</span>
             </li>
           {/each}
         </ul>
       {:else}
         {#if secondaryStatus === 'loading'}
           <div class="skel-rows">
-            {#each [70, 90, 60, 80] as w}
+            {#each [85, 60, 75, 50, 90] as w}
               <span class="skel-line" style:width="{w}%"></span>
             {/each}
           </div>
         {:else}
-          <div class="empty">No recent signals</div>
+          <div class="empty">Trending data is being prepared.</div>
         {/if}
       {/if}
     </section>
@@ -2253,18 +1905,6 @@
     </section>
   </main>
 
-  <section class="cta-block">
-    <div class="cta-h">This is just a snapshot.</div>
-    <div class="cta-body">
-      Cogochi auto-tracks alpha patterns, lets AI analyze entry and exit timing, and gives you
-      paper trading to validate your judgment before risking real capital.
-    </div>
-    <div class="cta-actions">
-      <button type="button" class="btn btn-primary btn-lg" onclick={() => openWalletModal()}>Start free →</button>
-      <a href="/cogochi" class="btn btn-ghost btn-lg">See Terminal</a>
-    </div>
-  </section>
-
   <footer class="ftr">
     <div>Cogochi · Last updated {new Date(data.generatedAt).toLocaleString('en-US')}</div>
     <div>
@@ -2272,26 +1912,116 @@
     </div>
   </footer>
 
-  <!-- L7: near-footer sticky CTA (W-0501 PR1.5b) -->
-  {#if l7Visible}
-    <div class="l7-sticky">
-      <SignupWall
-        lever="l7"
-        title="오늘 브리핑 PDF 메일로"
-        blurb="14개 시그널 + 한 줄 요약. 매일 1회. 언제든 해제."
-        cta="받기"
-      />
-      <button
-        class="l7-close"
-        type="button"
-        aria-label="Dismiss"
-        onclick={() => { l7Visible = false; }}
-      >×</button>
-    </div>
-  {/if}
 </div>
 
 <style>
+  /* ── Regime Hero ───────────────────────────────────────────── */
+  .regime-hero {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    padding: 20px 24px;
+    margin-bottom: 12px;
+    border-radius: 12px;
+    background: var(--d-bg-2);
+    border: 1px solid var(--d-line-strong);
+    position: relative;
+    overflow: hidden;
+  }
+  .regime-hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: 12px;
+  }
+  .regime-hero[data-tone="pos"]::before {
+    background: radial-gradient(ellipse at 0% 50%, rgba(34,197,94,0.08), transparent 60%);
+  }
+  .regime-hero[data-tone="neg"]::before {
+    background: radial-gradient(ellipse at 0% 50%, rgba(239,68,68,0.08), transparent 60%);
+  }
+  .regime-hero[data-tone="neu"]::before {
+    background: radial-gradient(ellipse at 0% 50%, rgba(249,216,194,0.04), transparent 60%);
+  }
+  .rh-left {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .rh-badge {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+    border-radius: 4px;
+    border: 1px solid currentColor;
+  }
+  .rh-badge[data-tone="pos"] { color: #22c55e; border-color: rgba(34,197,94,0.4); background: rgba(34,197,94,0.08); }
+  .rh-badge[data-tone="neg"] { color: #ef4444; border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.08); }
+  .rh-badge[data-tone="neu"] { color: var(--d-mute); border-color: var(--d-line); }
+  .rh-btc {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rh-price {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--d-cream);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    letter-spacing: -0.02em;
+  }
+  .rh-delta {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .rh-stats {
+    display: flex;
+    gap: 0;
+    flex: 1;
+    border-left: 1px solid var(--d-line);
+    padding-left: 24px;
+    flex-wrap: wrap;
+  }
+  .rhs {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 0 20px;
+    border-right: 1px solid var(--d-line);
+  }
+  .rhs:last-child { border-right: none; }
+  .rhs-l {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--d-mute);
+  }
+  .rhs-v {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--d-cream);
+  }
+  .rhs-s {
+    font-size: 10px;
+    color: var(--d-mute);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  .rh-time {
+    flex-shrink: 0;
+    font-size: 11px;
+    color: var(--d-mute);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+
   /* ─────────────────────────────────────────────────────────────
      Daily palette: dark base for data legibility,
      home tokens (salmon / apricot / paper) for accents.
@@ -2644,19 +2374,28 @@
   .card {
     background: var(--d-bg-1);
     border: 1px solid var(--d-line);
-    border-radius: 8px;
-    padding: 12px;
-    min-height: 148px;
+    border-radius: 10px;
+    padding: 14px 16px;
+    min-height: 160px;
     display: flex;
     flex-direction: column;
-    transition: border-color 0.18s;
+    transition: border-color 0.15s, box-shadow 0.15s;
   }
-  .card:hover { border-color: var(--d-line-strong); }
+  .card:hover {
+    border-color: var(--d-line-strong);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
+  }
+  .card-crypto,
   .card-patterns,
   .card-news,
   .card-stocks,
   .card-calendar,
-  .card-events {
+  .card-events,
+  .card-options,
+  .card-onchain,
+  .card-venue-funding,
+  .card-whales,
+  .card-trending {
     grid-column: span 2;
   }
   .card-news {
@@ -2677,11 +2416,11 @@
     margin-bottom: 10px;
   }
   .card-title {
-    font-family: var(--sc-font-display, 'GT Sectra Display', 'Times New Roman', serif);
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--d-cream);
-    letter-spacing: 0.01em;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--d-text);
   }
   .card-meta {
     display: flex;
@@ -2690,15 +2429,13 @@
     flex-wrap: wrap;
   }
   .src-chip {
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--d-apricot);
-    border: 1px solid rgba(249, 216, 194, 0.22);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 10px;
+    color: var(--d-mute);
+    background: rgba(249,216,194,0.06);
     padding: 2px 6px;
-    border-radius: 4px;
-    background: rgba(249, 216, 194, 0.04);
+    border-radius: 3px;
+    letter-spacing: 0.04em;
   }
   .card-sub {
     font-size: 11px;
@@ -2869,8 +2606,8 @@
     font-weight: 500;
   }
   .metric-v {
-    font-size: 20px;
-    font-weight: 600;
+    font-size: 18px;
+    font-weight: 700;
     color: var(--d-cream);
     margin-top: 4px;
     font-variant-numeric: tabular-nums;
@@ -3188,29 +2925,43 @@
   .unlock-when { color: #f9a26c; font-size: 11px; }
 
   /* ── News ─────────────────────────────────────────────────── */
-  .news-list { list-style: none; margin: 0; padding: 0; }
-  .news-row { padding: 12px 0; border-bottom: 1px solid var(--d-line); }
+  .news-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
+  .news-row {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--d-line);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 12px;
+    align-items: start;
+  }
   .news-row:last-child { border-bottom: none; }
   .news-title {
-    color: var(--d-cream);
+    color: var(--d-text);
     text-decoration: none;
-    font-size: 14px;
-    line-height: 1.45;
-    display: block;
+    font-size: 13px;
+    line-height: 1.5;
     letter-spacing: 0.005em;
+    transition: color 0.12s;
+    grid-column: 1 / -1;
   }
   .news-title:hover { color: var(--d-apricot); }
   .news-meta {
     display: flex;
-    gap: 10px;
-    margin-top: 5px;
+    gap: 8px;
     font-size: 11px;
     color: var(--d-mute);
-    flex-wrap: wrap;
     font-family: 'JetBrains Mono', ui-monospace, monospace;
+    flex-wrap: wrap;
+    grid-column: 1 / -1;
   }
+  .news-time { color: var(--d-mute-2); }
   .news-source { color: var(--d-text-2); }
-  .news-imp { color: #f9a26c; }
+  .news-imp {
+    color: #f9a26c;
+    background: rgba(249,162,108,0.1);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
 
   /* ── Empty / CTA / Footer ─────────────────────────────────── */
   .empty { color: var(--d-mute); font-size: 13px; text-align: center; padding: 24px 12px; }
@@ -3294,58 +3045,26 @@
     }
   }
 
-  @media (max-width: 960px) {
-    .grid { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 900px) {
+    .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .regime-hero { flex-direction: column; align-items: flex-start; }
+    .rh-stats { border-left: none; padding-left: 0; border-top: 1px solid var(--d-line); padding-top: 12px; }
   }
-  @media (max-width: 720px) {
+  @media (max-width: 600px) {
     .grid { grid-template-columns: 1fr; }
-    .daily-workbench {
-      margin-top: 8px;
-      gap: 8px;
+    .card-patterns, .card-news, .card-stocks, .card-calendar, .card-events,
+    .card-options, .card-onchain, .card-venue-funding, .card-whales, .card-trending, .card-crypto {
+      grid-column: span 1;
     }
-    .workbench-main {
-      gap: 8px;
-    }
-    .workbench-side {
-      grid-template-columns: 1fr;
-    }
-    .selection-card {
-      padding: 12px;
-    }
-    .selection-card h2 {
-      font-size: 16px;
-    }
-    .selection-grid {
-      grid-template-columns: 1fr;
-    }
-    .card-patterns,
-    .card-news,
-    .card-stocks,
-    .card-calendar,
-    .card-events {
-      grid-column: 1 / -1;
-    }
+    .card-news { grid-column: 1 / -1; }
+    .rh-stats { gap: 12px; }
+    .rhs { border-right: none; padding: 0 12px 0 0; }
+    .rh-price { font-size: 18px; }
     .section-label {
       align-items: flex-start;
       flex-direction: column;
       gap: 2px;
       padding-bottom: 8px;
-    }
-    .board-head {
-      padding: 12px;
-    }
-    .board-row {
-      grid-template-columns: minmax(120px, 1fr) 88px 74px;
-      gap: 8px;
-      padding: 8px 12px;
-    }
-    .board-row > :last-child {
-      display: none;
-    }
-    .board-tab {
-      min-width: 82px;
-      min-height: 44px;
-      padding: 0 10px;
     }
     .earnings-row {
       grid-template-columns: 44px 1fr auto;
@@ -3355,7 +3074,6 @@
     }
     .fg-value { font-size: 52px; }
     .market-grid { grid-template-columns: 1fr 1fr; }
-    .cta-h { font-size: 22px; }
   }
 
   @media (max-width: 768px) {
