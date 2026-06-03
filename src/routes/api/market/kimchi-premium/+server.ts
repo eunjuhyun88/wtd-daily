@@ -27,19 +27,19 @@ export const GET: RequestHandler = async () => {
   if (cached) return json(cached, { headers: { 'Cache-Control': 'public, s-maxage=60' } });
 
   try {
-    // Fetch in parallel: Upbit BTC/KRW, Binance BTC/USDT, USD/KRW
     const [upbit, binance, forex] = await Promise.all([
       safeJson('https://api.upbit.com/v1/ticker?markets=KRW-BTC'),
       safeJson('https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT'),
-      safeJson('https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.json'),
+      // Use open exchange rate API (free, no key)
+      safeJson('https://open.er-api.com/v6/latest/USD'),
     ]);
 
-    const upbitPrice = (upbit as { trade_price?: number }[])?.[0]?.trade_price;
+    const upbitPrice = (upbit as Array<{ trade_price?: number }>)?.[0]?.trade_price;
     const binancePrice = parseFloat((binance as { price?: string })?.price ?? '0');
-    const usdKrw = (forex as { usd?: { krw?: number } })?.usd?.krw ?? null;
+    const usdKrw = (forex as { rates?: { KRW?: number } })?.rates?.KRW ?? null;
 
     if (!upbitPrice || !binancePrice || !usdKrw) {
-      return json({ ok: false, error: 'data unavailable' }, { status: 502 });
+      return json({ ok: false, error: 'data unavailable', debug: { upbitPrice, binancePrice, usdKrw } }, { status: 502 });
     }
 
     const binancePriceKrw = binancePrice * usdKrw;
@@ -58,7 +58,7 @@ export const GET: RequestHandler = async () => {
     };
     setCache('kimchi', payload);
     return json(payload, { headers: { 'Cache-Control': 'public, s-maxage=60' } });
-  } catch {
-    return json({ ok: false, error: 'kimchi-premium unavailable' }, { status: 502 });
+  } catch (e) {
+    return json({ ok: false, error: String(e) }, { status: 502 });
   }
 };

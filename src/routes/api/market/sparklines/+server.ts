@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 
-const BINANCE = 'https://fapi.binance.com';
+const BINANCE = 'https://api.binance.com';
 const VALID = /^[A-Z0-9]{2,20}$/;
 
 interface SparklineData {
@@ -14,7 +14,7 @@ interface SparklineData {
 
 async function fetchKlines(symbol: string): Promise<SparklineData | null> {
   try {
-    const url = `${BINANCE}/fapi/v1/klines?symbol=${symbol}&interval=1h&limit=24`;
+    const url = `${BINANCE}/api/v3/klines?symbol=${symbol}&interval=1h&limit=24`;
     const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) return null;
     const data = await res.json();
