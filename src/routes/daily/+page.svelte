@@ -2520,7 +2520,9 @@
   .grid {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-auto-rows: min-content;
     gap: 8px;
+    align-items: start;
   }
   .section-label {
     grid-column: 1 / -1;
@@ -2549,7 +2551,6 @@
     border: 1px solid var(--d-line);
     border-radius: 10px;
     padding: 14px 16px;
-    min-height: 160px;
     display: flex;
     flex-direction: column;
     transition: border-color 0.15s, box-shadow 0.15s;
