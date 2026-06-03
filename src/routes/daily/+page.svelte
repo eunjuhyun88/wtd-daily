@@ -1894,7 +1894,7 @@
     {/if}
 
     <!-- Card: CME COT institutional OI -->
-    {#if cmeCot && (cmeCot.btc_oi != null || cmeCot.eth_oi != null)}
+    {#if (cmeCot && cmeCot.btc_oi != null) || (cmeCot && cmeCot.eth_oi != null)}
       <section class="card card-cme-cot" aria-label="CME COT institutional OI">
         <div class="card-h">
           <span class="card-title">CME Institutional OI</span>
