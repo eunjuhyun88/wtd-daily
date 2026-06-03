@@ -1,0 +1,3570 @@
+<script lang="ts">
+  import { onMount, onDestroy, tick } from 'svelte';
+  import { createChart, CandlestickSeries, LineSeries, HistogramSeries, BarSeries, AreaSeries, createSeriesMarkers, PriceScaleMode } from 'lightweight-charts';
+  import type { UTCTimestamp, IChartApi, ISeriesApi, SeriesType, SeriesMarker, LogicalRange } from 'lightweight-charts';
+  import { get } from 'svelte/store';
+  import {
+    chartIndicators,
+    toggleIndicator as toggleChartIndicator,
+    removeIndicator as removeChartIndicator,
+    type IndicatorKey,
+  } from '$lib/stores/chartIndicators';
+  import { getPaneIndicatorStore, togglePaneIndicator } from '$lib/stores/perPaneIndicators';
+  import type { DepthLadderEnvelope, LiquidationClustersEnvelope } from '$lib/contracts/terminalBackend';
+  import {
+    computeDepthRatio,
+    computeContextSummaryItems,
+    computeMetricStripItems,
+    type MetricItem,
+    type QuantRegimeSummary,
+    type CvdDivergenceSummary,
+  } from '$lib/chart/chartMetrics';
+  import type { ChartSeriesPayload } from '$lib/api/terminalBackend';
+  import type { ChartViewportSnapshot } from '$lib/contracts/terminalPersistence';
+  import { tfMinutes } from '$lib/chart/mtfAlign';
+  import { TF_BAR_SPACING, TF_MIN_BAR_SPACING } from '$lib/chart/chartTfConfig';
+  import { trackChartFirstPaint } from '$lib/hubs/terminal/telemetry';
+  import { chartTimeToUnixSeconds, slicePayloadToViewport } from '$lib/terminal/chartViewportCapture';
+  import SaveSetupModal from './SaveSetupModal.svelte';
+  import SaveStrip from './SaveStrip.svelte';
+  import ResearchPanel from './ResearchPanel.svelte';
+  import AgentTradeOverlay from './AgentTradeOverlay.svelte';
+  // ── Layer 1 range primitive (W-0086) ────────────────────────────────────────
+  import { chartSaveMode } from '$lib/stores/chartSaveMode';
+  import { rangeContext } from '$lib/stores/rangeContext';
+  import { terminalState } from '$lib/stores/terminalState';
+  import { pendingChartTs } from '../deeplink.store';
+  import { RangePrimitive } from '../../../shared/chart/primitives/RangePrimitive';
+  import { GammaPinPrimitive, type GammaPinData } from '../../../shared/chart/primitives/GammaPinPrimitive';
+  import { SmcOverlayPrimitive } from '../../../shared/chart/primitives/SmcOverlayPrimitive';
+  import { LiqZonesPrimitive } from '../../../shared/chart/primitives/LiqZonesPrimitive';
+  import { fetchSmcEvents } from '$lib/api/smcClient';
+  import { fetchLiqZones } from '$lib/api/liqZonesClient';
+  // ── Layer 2 overlay (W-0086) ────────────────────────────────────────────────
+  import PhaseBadge from '../../../shared/chart/overlays/PhaseBadge.svelte';
+  // ── Layer 3: Capture annotations (W-0120) ───────────────────────────────────
+  import CaptureAnnotationLayer from '../../../shared/chart/CaptureAnnotationLayer.svelte';
+  import CaptureReviewDrawer    from '../../../shared/chart/CaptureReviewDrawer.svelte';
+  import type { CaptureAnnotation } from '../../../shared/chart/primitives/CaptureMarkerPrimitive';
+  import type { Time } from 'lightweight-charts';
+  import { DataFeed } from '$lib/chart/DataFeed';
+  import { useChartDataFeed } from '$lib/chart/useChartDataFeed.svelte';
+  import { createLiveTickState } from '$lib/chart/liveTickState.svelte';
+  // ── W-0289: Drawing Tools ────────────────────────────────────────────────────
+  import DrawingOverlay from './DrawingOverlay.svelte';
+  import DrawingToolbar from './DrawingToolbar.svelte';
+  import { DrawingManager, type DrawingToolType, type AIDrawShape } from '$lib/chart/DrawingManager';
+  import { PriceLineManager } from '$lib/chart/usePriceLines';
+  // ── Multi-pane indicator layer (W-0211 follow-up) ──────────────────────────
+  import { computePaneChips, computeLiqChips } from '$lib/chart/paneCurrentValues';
+  // ── W-0395: modular indicator layout ───────────────────────────────────────
+  import {
+    mountIndicatorPanes as mountIndicatorPanesModule,
+    mountSecondaryIndicator,
+    isOverlayIndicator,
+    refreshLiqPane,
+    type IndicatorSeriesRefs,
+    type SecondaryIndicatorPayload,
+    type PanePositions,
+  } from '$lib/chart/mountIndicatorPanes';
+  import { indicatorInstances } from '$lib/chart/indicatorInstances.svelte';
+  import {
+    calcRSI,
+    calcMACD,
+    calcEMAValues,
+    calcBB,
+    calcVWAP,
+    calcVWMA,
+    calcATRBands,
+  } from './chartIndicatorCalc';
+  import { createCrosshairSync, type CrosshairChips, type CrosshairUnsubscribe } from '$lib/chart/paneCrosshairSync';
+  import { createPaneLayoutStore, PANE_KINDS, type PaneKind } from '$lib/chart/paneLayoutStore.svelte';
+  import PaneInfoBar from './PaneInfoBar.svelte';
+  import KpiStrip from './KpiStrip.svelte';
+  import type { KpiInputBundle } from '$lib/chart/kpiStrip';
+  import { AlphaOverlayLayer } from '../../../shared/chart/AlphaOverlayLayer';
+  import type { PanelAnalyzeData } from '$lib/terminal/panelAdapter';
+  import { comparisonStore } from '$lib/stores/comparisonStore';
+  import { whaleStore } from '$lib/stores/whaleStore';
+  import { chartAIOverlay, clearAIOverlay } from '$lib/stores/chartAIOverlay';
+  import type { AIRangeBox, AIAnnotation } from '$lib/stores/chartAIOverlay';
+  import { setChartFreshness } from '$lib/stores/chartFreshness';
+  // ── W-0358: Chart Notes Overlay ───────────────────────────────────────────
+  import { chartNotesStore } from '$lib/stores/chartNotesStore.svelte';
+  import { screenerMarkers } from '$lib/stores/screenerMarkers';
+  import { newsMarkersStore } from '$lib/stores/newsMarkersStore';
+  import FloatingNoteButton from '../../../shared/chart/FloatingNoteButton.svelte';
+  import { shellStore, activeDrawingMode, activeTabState } from '$lib/hubs/terminal/shell.store';
+  import IndicatorLibrary from './IndicatorLibrary.svelte';
+  import IndicatorCatalogModal from '$lib/components/indicators/IndicatorCatalogModal.svelte';
+  import type { IndicatorDef } from '$lib/indicators/indicatorRegistry';
+
+  // ── Props ──────────────────────────────────────────────────────────────────
+  interface VerdictLevels {
+    entry?:  number;
+    target?: number;
+    stop?:   number;
+  }
+
+  interface Props {
+    symbol:         string;
+    tf?:            string;       // controlled externally (gTf); falls back to internal state
+    tabId?:         string;       // W-T7: per-tab drawing isolation
+    verdictLevels?: VerdictLevels;
+    initialData?: ChartSeriesPayload | null;
+    depthSnapshot?: DepthLadderEnvelope['data'] | null;
+    liqSnapshot?: LiquidationClustersEnvelope['data'] | null;
+    quantRegime?: {
+      bucket: 'risk_on_leverage' | 'short_squeeze' | 'deleveraging' | 'neutral';
+      label: string;
+      hint?: string;
+      tone: 'bull' | 'bear' | 'neutral' | 'warn';
+      oiDeltaPct: number | null;
+      fundingPct: number | null;
+    };
+    cvdDivergence?: {
+      state: 'bullish_divergence' | 'bearish_divergence' | 'aligned' | 'unknown';
+      score: number;
+      label: string;
+      hint?: string;
+    };
+    /** Rolling 24h change from analysis snapshot (exchange-style); distinct from 1-bar change from candles */
+    change24hPct?: number | null;
+    onSaveSetup?:   (snap: { symbol: string; timestamp: number; tf: string }) => void;
+    onCaptureSaved?: (captureId: string) => void;
+    onTfChange?:    (tf: string) => void;
+    /** full = slim book/liq/quant rails; chart = candle + indicator panes only (context in right rail / Flow tab). */
+    contextMode?: 'full' | 'chart';
+    /** default = classic terminal pane set; velo = TradingView/Velo-style stacked market panes. */
+    surfaceStyle?: 'default' | 'velo';
+    /** Alpha phase markers — rendered as chart markers on the candle series. */
+    alphaMarkers?: Array<{
+      timestamp: number;  // unix seconds
+      phase: string;
+      label: string;
+      color?: string;
+    }>;
+    /** Fired when a candle closes (WS k.x=true). Parent can refresh analyze/verdict state. */
+    onCandleClose?: (bar: { time: number; open: number; high: number; low: number; close: number; volume: number }) => void;
+    /**
+     * Full analysis response — drives AlphaOverlayLayer (W-0210 Layer 1):
+     * ATR TP/Stop price lines, phase markers, breakout arrows.
+     */
+    analysisData?: PanelAnalyzeData | null;
+    /** Gamma pin overlay — pass from parent when options-snapshot data is live. null hides line. */
+    gammaPin?: GammaPinData | null;
+    /**
+     * Tablet routing: when provided, capture annotation clicks call this instead of
+     * opening the internal fixed drawer. CenterPanel uses this to show in PeekDrawer.
+     */
+    onCaptureSelect?: (ann: CaptureAnnotation) => void;
+    /** Emitted when the main chart's visible logical range changes — used by SubPanel sync. */
+    onTimeRangeChange?: (range: LogicalRange) => void;
+    /** Emitted on crosshair move — passes current bar timestamp (null when off-chart). */
+    onCrosshairMove?: (time: UTCTimestamp | null) => void;
+    /** Suppress specific indicator panes — used by ChartColumn when SubPanel already shows them. */
+    suppressPanels?: Array<'oi' | 'fr' | 'cvd' | 'liq'>;
+    /** Per-pane indicator isolation — multi-chart grid passes its paneId here. */
+    paneId?: number;
+  }
+
+  let {
+    symbol,
+    tf: externalTf,
+    tabId,
+    verdictLevels,
+    initialData = null,
+    depthSnapshot = null,
+    liqSnapshot = null,
+    quantRegime = undefined,
+    cvdDivergence = undefined,
+    change24hPct = null,
+    onSaveSetup,
+    onCaptureSaved,
+    onTfChange,
+    contextMode = 'full',
+    surfaceStyle = 'default',
+    alphaMarkers = undefined,
+    onCandleClose,
+    gammaPin = null,
+    onCaptureSelect = undefined,
+    analysisData = null,
+    onTimeRangeChange = undefined,
+    onCrosshairMove = undefined,
+    suppressPanels = [] as Array<'oi' | 'fr' | 'cvd' | 'liq'>,
+    paneId = undefined,
+  }: Props = $props();
+
+  // ── Internal TF state — syncs with externalTf if provided ─────────────────
+  // Start with '1h'; externalTf takes precedence via $derived when set by parent
+  let internalTf = $state('1h');
+  let tf = $derived(externalTf ?? internalTf);
+
+  // ── DOM refs ───────────────────────────────────────────────────────────────
+  let containerEl  = $state<HTMLDivElement | undefined>(undefined);
+  /** Wraps candle + sub-panes; drives flex height for TradingView-style fill. */
+  let chartStackEl = $state<HTMLDivElement | undefined>(undefined);
+  /**
+   * Single chart container — native multi-pane (lightweight-charts v5.1).
+   * Indicators (vol/rsi/macd/oi/cvd/liq) live in panes 1..N inside this same
+   * IChartApi, so they share crosshair + time axis natively.
+   */
+  let mainEl       = $state<HTMLDivElement | undefined>(undefined);
+
+  // ── W-0289: Drawing tools ──────────────────────────────────────────────────
+  // drawingActiveTool derived from shellStore — DrawingRail is the single source of truth
+  const drawingActiveTool = $derived($shellStore.drawingTool as DrawingToolType);
+  let drawingToolsVisible   = $state(false);
+  let drawingMgr = $state<DrawingManager | null>(null);
+
+  const onToggleDrawingTools = () => { drawingToolsVisible = !drawingToolsVisible; shellStore.setDrawingTool(drawingToolsVisible ? 'trendLine' : 'cursor'); };
+
+  // Sync shellStore.drawingTool → drawingMgr via syncTool (no toggle, no onToolChange re-emission)
+  $effect(() => {
+    const tool = $shellStore.drawingTool as DrawingToolType;
+    const mgr = drawingMgr;
+    if (mgr) setTimeout(() => mgr.syncTool(tool), 0);
+  });
+
+  // Handle clear/delete dispatched from DrawingRail via DOM events
+  function onDrawingClearAll() { drawingMgr?.clearAll(); }
+  function onDrawingDeleteSelected() { drawingMgr?.deleteSelected(); }
+
+  function onCmdSnapshot(e: Event) {
+    if ((e as CustomEvent).detail?.id !== 'chart_snapshot') return;
+    const canvas = containerEl?.querySelector('canvas');
+    if (!canvas) return;
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `chart_${symbol}_${tf}_${Date.now()}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  function onCmdZoom(e: Event) {
+    const id = (e as CustomEvent).detail?.id;
+    if (id !== 'chart_zoom_in' && id !== 'chart_zoom_out' && id !== 'chart_fit' && id !== 'chart_realtime') return;
+    if (!mainChart) return;
+    const ts = mainChart.timeScale();
+    if (id === 'chart_fit') { ts.fitContent(); return; }
+    if (id === 'chart_realtime') { ts.scrollToRealTime(); return; }
+    const r = ts.getVisibleLogicalRange();
+    if (!r) return;
+    const center = (r.from + r.to) / 2;
+    const half = (r.to - r.from) / 2;
+    const factor = id === 'chart_zoom_in' ? 0.7 : 1.4;
+    ts.setVisibleLogicalRange({ from: center - half * factor, to: center + half * factor });
+  }
+
+  function focusChartAt(tsNum: number | null) {
+    if (!mainChart || tsNum == null) return;
+    const tfMin = tfMinutes(tf) ?? 60;
+    const half = (tfMin * 60) * 60; // ±60 candles around target
+    const from = (tsNum - half) as UTCTimestamp;
+    const to = (tsNum + half) as UTCTimestamp;
+    try { mainChart.timeScale().setVisibleRange({ from, to }); } catch { /* range out of data — ignore */ }
+  }
+
+  let indicatorLibraryOpen = $state(false);
+  let catalogModalOpen = $state(false);
+
+  // ── W-0358: Chart Notes ───────────────────────────────────────────────────
+  $effect(() => { chartNotesStore.loadNotes(symbol, tf); });
+
+  $effect(() => {
+    const targetTs = $pendingChartTs;
+    if (!mainChart || targetTs == null) return;
+    focusChartAt(targetTs);
+    pendingChartTs.set(null);
+  });
+
+  // ── W-0521 PR2: screener marker overlay ─────────────────────────────────────
+  $effect(() => {
+    return screenerMarkers.subscribe((m) => {
+      if (!candleMarkerApi) return;
+      const hits = m.get(`${symbol}:${tf}`)?.hits ?? [];
+      const screenerMs: SeriesMarker<UTCTimestamp>[] = hits.map((h) => ({
+        time: h.timestamp as UTCTimestamp,
+        position: 'belowBar' as const,
+        color: '#2dd4bf',
+        shape: 'arrowUp' as const,
+        text: '▲',
+      }));
+      const newsMs = newsMarkersStore.getMarkers(symbol, tf);
+      const all = [..._baseMarkers, ...newsMs, ...screenerMs]
+        .sort((a, b) => (a.time as number) - (b.time as number));
+      candleMarkerApi.setMarkers(all);
+    });
+  });
+
+  // ── W-0521 PR3: news marker overlay — reload when symbol/tf changes ─────────
+  $effect(() => {
+    const s = symbol; const t = tf;
+    newsMarkersStore.load(s, t, tfMinutes(t) ?? 60);
+  });
+
+  $effect(() => {
+    return newsMarkersStore.subscribe((map) => {
+      if (!candleMarkerApi) return;
+      const newsMs = map.get(`${symbol}:${tf}`)?.markers ?? [];
+      const hits = screenerMarkers.getHits(symbol, tf);
+      const screenerMs: SeriesMarker<UTCTimestamp>[] = hits.map((h) => ({
+        time: h.timestamp as UTCTimestamp,
+        position: 'belowBar' as const,
+        color: '#2dd4bf',
+        shape: 'arrowUp' as const,
+        text: '▲',
+      }));
+      const all = [..._baseMarkers, ...newsMs, ...screenerMs]
+        .sort((a, b) => (a.time as number) - (b.time as number));
+      candleMarkerApi.setMarkers(all);
+    });
+  });
+
+  function getLastClosedBarTime(): number {
+    const ks = chartData?.klines;
+    if (!ks || ks.length < 2) return Math.floor(Date.now() / 1000);
+    // slice(-2,-1) avoids the forming (last) bar
+    return (ks[ks.length - 2] as { time: number }).time;
+  }
+
+  // ── Live tick scalars (price / time / changePct / oiDelta) ───────────────
+  // Owned by liveTickState; callbacks (DataFeed.onBar, renderCharts, crosshair)
+  // call liveTick.update() — coupling stays here, ownership does not.
+  const liveTick = createLiveTickState();
+  // Tracks the most recent WS/REST bar close so crosshairMove can restore it
+  // after the cursor leaves the chart (crosshairMove else-branch doesn't restore otherwise).
+  let _liveBarPrice: number | null = null;
+  let captureWindowLabel = $state('Visible range capture unavailable');
+  let captureBarCount = $state<number | null>(null);
+  let depthData = $state<DepthLadderEnvelope['data'] | null>(null);
+  let liqData = $state<LiquidationClustersEnvelope['data'] | null>(null);
+  let depthRatio = $derived(computeDepthRatio(depthData, liveTick.oiDelta));
+  let bidPct = $derived(Math.round((depthRatio / (1 + depthRatio)) * 100));
+  let askPct = $derived(100 - bidPct);
+  let liqAnchor = $derived(liqData?.currentPrice ?? liveTick.price ?? verdictLevels?.entry ?? 0);
+  let liqLong = $derived(liqData?.nearestLong?.price ?? (liqAnchor ? liqAnchor * 0.985 : 0));
+  let liqShort = $derived(liqData?.nearestShort?.price ?? (liqAnchor ? liqAnchor * 1.012 : 0));
+  let contextSummaryItems = $derived.by<MetricItem[]>(() =>
+    computeContextSummaryItems(depthData, bidPct, askPct, liqLong, liqShort, quantRegime as QuantRegimeSummary | undefined)
+  );
+  let metricStripItems = $derived.by<MetricItem[]>(() =>
+    computeMetricStripItems(quantRegime as QuantRegimeSummary | undefined, cvdDivergence as CvdDivergenceSummary | undefined, bidPct, askPct, depthData)
+  );
+
+  // Save Setup modal (mobile legacy)
+  let showSaveModal = $state(false);
+  let savedCaptureId = $state<string | null>(null);   // shown as toast after save
+
+  // ResearchPanel — opens automatically when range is fully selected
+  let showResearchPanel = $state(false);
+  let researchViewport = $state<ChartViewportSnapshot | null>(null);
+
+  // Per-pane indicator state — uses per-pane store when paneId is set, global store otherwise.
+  // _ind is updated via a store subscription so adding/removing panes is reactive.
+  let _ind = $state(get(chartIndicators));
+  $effect(() => {
+    const store = (paneId !== undefined && paneId >= 0)
+      ? getPaneIndicatorStore(paneId)
+      : chartIndicators;
+    return store.subscribe(v => { _ind = v; });
+  });
+
+  // Indicator toggles — read from _ind (per-pane or global depending on paneId).
+  let showVWAP = $derived(_ind.vwap);
+  let showVWMA = $derived(_ind.vwma);
+  let showBB   = $derived(_ind.bb);
+  let showEMA  = $derived(_ind.ema);
+  let showATRBands = $derived(_ind.atr_bands);
+  let showCVD = $derived(_ind.cvd && !suppressPanels.includes('cvd'));
+  let showMACD = $derived(_ind.macd);   // replaces RSI pane when active
+  let showRSI = $derived(_ind.rsi);
+  let showOI = $derived(_ind.oi && !suppressPanels.includes('oi'));
+  let showFundingPane = $derived(_ind.funding && !suppressPanels.includes('fr'));
+  let showLiqPane = $derived(_ind.liq && !suppressPanels.includes('liq'));
+  let showVolume = $derived(_ind.volume);
+  let showOBV    = $derived(_ind.obv);
+  // derivativesOverlay = opt-in overlay on main chart; false = sub-pane (default/standard)
+  let derivativesOnMain = $derived(_ind.derivativesOverlay);
+  // W-0210 Layer 3: comparison overlay (BTC or benchmark symbol)
+  let showComparison = $derived(_ind.comparison);
+  let isVeloSurface = $derived(surfaceStyle === 'velo');
+  // W-T11: heatmap coloring for volume bars; volume profile right-side overlay
+  let showHeatmap = $derived($activeTabState?.heatmapOn ?? false);
+  // W-0498 PR4: honor both legacy vpOn tab state and catalog toggle
+  let showVolumeProfile = $derived(($activeTabState?.vpOn ?? false) || $chartIndicators.volumeProfile);
+  type CvdVisualMode = 'blend' | 'abs' | 'norm';
+  const CVD_VISUAL_MODE_KEY = 'wtd.chart.cvd.visualMode.v1';
+  let cvdVisualMode = $state<CvdVisualMode>('blend');
+  // W-T4: alert price lines (store-driven; UI removed)
+  let tabAlerts = $derived($activeTabState?.alerts ?? []);
+
+  const chartMode = $derived(($activeTabState?.chartType ?? 'candle') as 'candle' | 'line' | 'bar' | 'area' | 'heikin');
+  const priceScaleMode = $derived($activeTabState?.priceScaleMode ?? 'normal');
+  /** Collapsible book / liq / quant strip (TradingView-style: chart first). */
+  let contextStripOpen = $state(false);
+
+  let studyQuery = $state('');
+
+  onMount(() => {
+    try {
+      const stored = localStorage.getItem(CVD_VISUAL_MODE_KEY);
+      if (stored === 'blend' || stored === 'abs' || stored === 'norm') cvdVisualMode = stored;
+    } catch { /* ignore */ }
+  });
+
+  $effect(() => {
+    try {
+      localStorage.setItem(CVD_VISUAL_MODE_KEY, cvdVisualMode);
+    } catch { /* ignore */ }
+  });
+
+  let activeIndicatorCount = $derived.by(() => {
+    let n = 0;
+    if (showVWAP) n++;
+    if (showVWMA) n++;
+    if (showBB) n++;
+    if (showEMA) n++;
+    if (showATRBands) n++;
+    if (showMACD) n++;
+    if (showCVD) n++;
+    if (derivativesOnMain) n++;
+    return n;
+  });
+
+  /** Number of sub-panes actually mounted below the price pane. */
+  let activePanelCount = $derived.by(() => {
+    let n = 0;
+    if (panePositions.rsiOrMacd >= 0) n++;
+    if (panePositions.oi >= 0) n++;
+    if (panePositions.cvd >= 0) n++;
+    if (panePositions.funding >= 0) n++;
+    if (panePositions.liq >= 0) n++;
+    if (panePositions.obv >= 0) n++;
+    return n;
+  });
+
+  /** Sub-pane kinds that create a separate pane (not overlays on pane 0). */
+  const SUB_PANE_KINDS = new Set(['rsi', 'macd', 'oi', 'cvd', 'derivatives']);
+
+  /** Top % for each secondary instance sub-pane (instanceId → %). */
+  let instancePibTops = $derived.by((): Map<string, number> => {
+    const subPaneInstances = indicatorInstances.instances.filter(
+      (i) => i.style.visible && SUB_PANE_KINDS.has(i.engineKey),
+    );
+    if (subPaneInstances.length === 0) return new Map();
+    const activeKinds = ORDERED_KINDS.filter(k => panePositions[k] >= 0);
+    const fixedStretch = activeKinds.reduce((s, k) => s + paneLayout.state.stretch[k], 0);
+    const totalStretch = priceStretch + fixedStretch + subPaneInstances.length;
+    let cumPct = (priceStretch + fixedStretch) / totalStretch * 100;
+    const tops = new Map<string, number>();
+    for (const inst of subPaneInstances) {
+      tops.set(inst.instanceId, cumPct);
+      cumPct += 1 / totalStretch * 100;
+    }
+    return tops;
+  });
+
+  /**
+   * PR6-AC3: instance label map — when ≥2 instances share the same engineKey,
+   * assign "#1", "#2"… suffixes so PaneInfoBar shows "RSI #1", "RSI #2".
+   * instanceId → label suffix string (empty when family count = 1).
+   */
+  const instanceLabelSuffix = $derived.by((): Map<string, string> => {
+    const subInsts = indicatorInstances.instances.filter(
+      (i) => i.style.visible && SUB_PANE_KINDS.has(i.engineKey),
+    );
+    // Count per engineKey
+    const counts = new Map<string, number>();
+    for (const inst of subInsts) counts.set(inst.engineKey, (counts.get(inst.engineKey) ?? 0) + 1);
+    // Assign index only for multi-instance keys
+    const idx = new Map<string, number>();
+    const result = new Map<string, string>();
+    for (const inst of subInsts) {
+      const total = counts.get(inst.engineKey) ?? 1;
+      if (total >= 2) {
+        const n = (idx.get(inst.engineKey) ?? 0) + 1;
+        idx.set(inst.engineKey, n);
+        result.set(inst.instanceId, ` #${n}`);
+      } else {
+        result.set(inst.instanceId, '');
+      }
+    }
+    return result;
+  });
+
+  /**
+   * Price pane takes stretchFactor=4 (adjustable); each sub-pane takes its
+   * stored stretch factor. Used as a CSS custom property for pib-anchor overlays.
+   */
+  const ORDERED_KINDS = ['rsiOrMacd', 'oi', 'cvd', 'funding', 'liq', 'obv'] as const;
+  let priceFracPct = $derived.by(() => {
+    if (activePanelCount === 0 && indicatorInstances.instances.length === 0) return 100;
+    const activeKinds = ORDERED_KINDS.filter(k => panePositions[k] >= 0);
+    const subPaneInstanceCount = indicatorInstances.instances.filter(
+      (i) => i.style.visible && SUB_PANE_KINDS.has(i.engineKey),
+    ).length;
+    const totalStretch = priceStretch
+      + activeKinds.reduce((s, k) => s + paneLayout.state.stretch[k], 0)
+      + subPaneInstanceCount;
+    return Math.round((priceStretch / totalStretch) * 10000) / 100;
+  });
+
+  /** Per-pane top position (%) derived from actual stretch ratios. */
+  let pibTops = $derived.by((): Partial<Record<PaneKind, number>> => {
+    const activeKinds = ORDERED_KINDS.filter(k => panePositions[k] >= 0);
+    if (activeKinds.length === 0) return {};
+    // Secondary instances mount as additional sub-panes (each with stretchFactor=1
+    // by default), so their count must be in the totalStretch denominator —
+    // otherwise primary pane chips drift down and overlap into adjacent panes.
+    const subPaneInstanceCount = indicatorInstances.instances.filter(
+      (i) => i.style.visible && SUB_PANE_KINDS.has(i.engineKey),
+    ).length;
+    const totalStretch = priceStretch
+      + activeKinds.reduce((s, k) => s + paneLayout.state.stretch[k], 0)
+      + subPaneInstanceCount;
+    let cumPct = priceStretch / totalStretch * 100;
+    const tops: Partial<Record<PaneKind, number>> = {};
+    for (const kind of activeKinds) {
+      tops[kind] = cumPct;
+      cumPct += paneLayout.state.stretch[kind] / totalStretch * 100;
+    }
+    return tops;
+  });
+
+  /** Pane boundary lines: position + which pane is above (to resize on drag). */
+  let resizeBoundaries = $derived.by(() => {
+    const activeKinds = ORDERED_KINDS.filter(k => panePositions[k] >= 0);
+    if (activeKinds.length === 0) return [] as Array<{ upperKind: 'price' | PaneKind; top: number }>;
+    const result: Array<{ upperKind: 'price' | PaneKind; top: number }> = [];
+    // Price / first-indicator boundary
+    result.push({ upperKind: 'price', top: priceFracPct });
+    // Indicator / indicator boundaries
+    for (let i = 0; i < activeKinds.length - 1; i++) {
+      const nextTop = pibTops[activeKinds[i + 1]];
+      if (nextTop != null) result.push({ upperKind: activeKinds[i], top: nextTop });
+    }
+    return result;
+  });
+
+  type StudyCategory = 'Favorites' | 'Overlays' | 'Pane' | 'Flow';
+  type StudyId = 'ema' | 'vwap' | 'bb' | 'atr' | 'macd' | 'cvd' | 'overlay' | 'comparison';
+  type StudyDefinition = {
+    id: StudyId;
+    label: string;
+    short: string;
+    category: StudyCategory;
+    description: string;
+    active: boolean;
+    featured?: boolean;
+    meta?: string;
+  };
+
+  let studyCatalog = $derived.by<StudyDefinition[]>(() => [
+    {
+      id: 'ema',
+      label: 'EMA 21 / 55',
+      short: 'EMA',
+      category: 'Favorites',
+      description: 'Fast and slow trend pair with optional higher-timeframe stepping.',
+      active: showEMA,
+      featured: true,
+      meta: emaTf ? `HTF ${emaTf}` : 'Chart resolution',
+    },
+    {
+      id: 'vwap',
+      label: 'VWAP',
+      short: 'VWAP',
+      category: 'Overlays',
+      description: 'Session-weighted price anchor on the main chart.',
+      active: showVWAP,
+      featured: true,
+    },
+    {
+      id: 'bb',
+      label: 'Bollinger 20, 2',
+      short: 'BB',
+      category: 'Overlays',
+      description: 'Volatility envelopes around the 20-period basis.',
+      active: showBB,
+      featured: true,
+    },
+    {
+      id: 'atr',
+      label: 'ATR 14 bands',
+      short: 'ATR',
+      category: 'Overlays',
+      description: 'ATR channel projected around the MA20 trend basis.',
+      active: showATRBands,
+    },
+    {
+      id: 'macd',
+      label: showMACD ? 'MACD pane' : 'RSI 14 pane',
+      short: showMACD ? 'MACD' : 'RSI',
+      category: 'Pane',
+      description: 'Switch the lower oscillator pane between RSI and MACD.',
+      active: true,
+      featured: true,
+      meta: showMACD ? 'MACD active' : 'RSI active',
+    },
+    {
+      id: 'cvd',
+      label: 'CVD pane',
+      short: 'CVD',
+      category: 'Flow',
+      description: 'Delta volume histogram with cumulative CVD tracking.',
+      active: showCVD,
+      featured: true,
+    },
+    {
+      id: 'overlay',
+      label: 'Funding + cumulative CVD overlay',
+      short: 'Overlay',
+      category: 'Flow',
+      description: 'Draw funding and cumulative CVD directly on the price chart.',
+      active: derivativesOnMain,
+    },
+    {
+      id: 'comparison',
+      label: 'BTC comparison overlay',
+      short: 'BTC ∥',
+      category: 'Overlays',
+      description: 'Normalized BTC price alongside current symbol — shows correlation / divergence.',
+      active: showComparison,
+      featured: true,
+    },
+  ]);
+
+  let filteredStudyCatalog = $derived.by(() => {
+    const q = studyQuery.trim().toLowerCase();
+    if (!q) return studyCatalog;
+    return studyCatalog.filter((study) =>
+      study.label.toLowerCase().includes(q)
+      || study.short.toLowerCase().includes(q)
+      || study.category.toLowerCase().includes(q)
+      || study.description.toLowerCase().includes(q)
+    );
+  });
+
+  let studySections = $derived.by(() => {
+    const order: StudyCategory[] = ['Favorites', 'Overlays', 'Pane', 'Flow'];
+    return order
+      .map((category) => ({
+        category,
+        items: filteredStudyCatalog.filter((study) => study.category === category || (category === 'Favorites' && study.featured)),
+      }))
+      .filter((section) => section.items.length > 0);
+  });
+
+  // ── Chart instance (single, native multi-pane) ────────────────────────────
+  let mainChart = $state<IChartApi | null>(null);
+  let priceSeries = $state<ISeriesApi<'Candlestick'> | ISeriesApi<'Line'> | ISeriesApi<'Area'> | ISeriesApi<'Bar'> | null>(null);
+  /** Pane indices for indicator panes — assigned during renderCharts(). */
+  let panePositions = $state<PanePositions>({
+    rsiOrMacd: -1, oi: -1, cvd: -1, funding: -1, liq: -1, obv: -1,
+  });
+  /** Secondary indicator instances mounted on extra panes (W-0399-p2). */
+  let secondaryPaneInfos = $state<Array<{ instanceId: string; engineKey: string; paneIndex: number }>>([]);
+  /** Series refs returned by mountIndicatorPanes — used by crosshair sync. */
+  let indicatorSeriesRefs: IndicatorSeriesRefs | null = null;
+  /** Pane index assigned to each secondary indicator instance (instanceId → paneIndex). */
+  let instancePaneMap = $state<Map<string, number>>(new Map());
+  /** Unsubscribe handle for the active crosshair sync subscription. */
+  let crosshairUnsub: CrosshairUnsubscribe | null = null;
+  /** Per-pane layout store (visibility + stretch persistence). */
+  const paneLayout = createPaneLayoutStore();
+
+  // W-0407: sync per-tab PaneConfig[] → paneLayout when active tab changes.
+  // Subscribe in onMount (post-hydration) to avoid Svelte 5 state_unsafe_mutation
+  // warnings that fire when $state is written during the hydration phase.
+  const _LAYOUT_KINDS = new Set<string>(PANE_KINDS);
+  function _syncPanesFromTab(tabState: { panes?: { kind: string; visible: boolean; stretch: number }[] }) {
+    const panes = tabState?.panes;
+    if (!panes?.length) return;
+    // setTimeout escapes Svelte 5 reactive flush (prevents state_unsafe_mutation)
+    setTimeout(() => {
+      const vis: Partial<Record<PaneKind, boolean>> = {};
+      for (const p of panes) {
+        if (_LAYOUT_KINDS.has(p.kind)) vis[p.kind as PaneKind] = p.visible;
+      }
+      paneLayout.syncVisibility(vis);
+      for (const p of panes) {
+        if (_LAYOUT_KINDS.has(p.kind) && p.visible) {
+          paneLayout.setStretch(p.kind as PaneKind, p.stretch);
+        }
+      }
+    }, 0);
+  }
+  let _unsubPanes: (() => void) | undefined;
+
+  /**
+   * Live chips driven by crosshair. null = crosshair off chart;
+   * parent falls back to static last-bar chips from chartData.
+   */
+  let crosshairChips = $state<CrosshairChips | null>(null);
+
+  // ── Phase 4: pane resize handles ─────────────────────────────────────────
+  /** Price pane stretch factor; normally 4, adjustable by dragging the first boundary. */
+  let priceStretch = $state(4);
+  type ResizeHandle = {
+    upperKind: 'price' | PaneKind;
+    startY: number;
+    startStretch: number;
+    startTotalStretch: number;
+    containerH: number;
+  };
+  let activeResize = $state<ResizeHandle | null>(null);
+
+  // ── DataFeed (resilient WS + polling) ─────────────────────────────────────
+  let _dataFeed: DataFeed | null = null;
+  let _renderFrame: number | null = null;
+  let _renderScheduled = false;
+  let _pendingRenderData: ChartSeriesPayload | null = null;
+  let _lastRenderSignature = '';
+
+  // ── Layer 1: Range primitive (W-0086 / W-0117) ────────────────────────────
+  let rangePrimitive: RangePrimitive | null = null;
+  let saveModeUnsubscribe: (() => void) | null = null;
+
+  // ── Layer 4: Gamma pin primitive (W-0122-Phase3) ──────────────────────────
+  let gammaPinPrimitive: GammaPinPrimitive | null = null;
+
+  // ── SMC overlay primitive (W-0456) ────────────────────────────────────────
+  let smcPrimitive: SmcOverlayPrimitive | null = null;
+
+  // ── Liq-zones overlay primitive (W-0459) ─────────────────────────────────
+  let liqPrimitive: LiqZonesPrimitive | null = null;
+
+  // ── W-0210 Layer 1: Alpha overlay (analysis → price lines + markers) ───────
+  let _alphaOverlay: AlphaOverlayLayer | null = null;
+
+  // ── Layer 3: Capture annotations (W-0120) ────────────────────────────────
+  let candleSeriesForAnnotations = $state<ISeriesApi<'Candlestick'> | null>(null);
+  let candleMarkerApi: { setMarkers: (markers: SeriesMarker<UTCTimestamp>[]) => void } | null = null;
+  // W-0521: base markers (CVD + alpha + notes) cached for screener overlay merge
+  let _baseMarkers = $state<SeriesMarker<UTCTimestamp>[]>([]);
+  let selectedCapture = $state<CaptureAnnotation | null>(null);
+  let _annotationsCache = $state<CaptureAnnotation[]>([]);
+
+  /** Convert tf string to seconds for ±2-bar click threshold (W-0124). */
+  function _tfToSec(t: string): number {
+    const map: Record<string, number> = {
+      '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+      '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '12h': 43200,
+      '1d': 86400, '3d': 259200, '1w': 604800,
+    };
+    return map[t] ?? 3600;
+  }
+
+  // Drag state — managed as plain variables (not reactive) to avoid cycles
+  let _dragActive = false;
+  let _dragOnMouseMove: ((e: MouseEvent) => void) | null = null;
+  let _dragOnMouseUp: ((e: MouseEvent) => void) | null = null;
+
+  function attachRangePrimitive() {
+    if (!priceSeries || rangePrimitive) return;
+    rangePrimitive = new RangePrimitive();
+    (priceSeries as ISeriesApi<SeriesType>).attachPrimitive(rangePrimitive as unknown as Parameters<ISeriesApi<SeriesType>['attachPrimitive']>[0]);
+  }
+
+  /** Instantiate or update the AlphaOverlayLayer against the current candle series. */
+  function syncAlphaOverlay() {
+    if (!priceSeries || !mainChart) { _alphaOverlay = null; return; }
+    // Only Candlestick series supports the full overlay (price lines + markers)
+    if (!candleSeriesForAnnotations) { _alphaOverlay = null; return; }
+    if (!_alphaOverlay) {
+      _alphaOverlay = new AlphaOverlayLayer(
+        candleSeriesForAnnotations as ISeriesApi<'Candlestick'>,
+        mainChart,
+      );
+    }
+    _alphaOverlay.apply(analysisData);
+  }
+
+  function detachRangePrimitive() {
+    if (!priceSeries || !rangePrimitive) return;
+    try {
+      (priceSeries as ISeriesApi<SeriesType>).detachPrimitive(rangePrimitive as unknown as Parameters<ISeriesApi<SeriesType>['detachPrimitive']>[0]);
+    } catch { /* ignore */ }
+    rangePrimitive = null;
+  }
+
+  function attachSmcPrimitive() {
+    if (!priceSeries || smcPrimitive) return;
+    smcPrimitive = new SmcOverlayPrimitive();
+    (priceSeries as ISeriesApi<SeriesType>).attachPrimitive(
+      smcPrimitive as unknown as Parameters<ISeriesApi<SeriesType>['attachPrimitive']>[0]
+    );
+  }
+
+  function detachSmcPrimitive() {
+    if (!priceSeries || !smcPrimitive) return;
+    try {
+      (priceSeries as ISeriesApi<SeriesType>).detachPrimitive(
+        smcPrimitive as unknown as Parameters<ISeriesApi<SeriesType>['detachPrimitive']>[0]
+      );
+    } catch { /* ignore */ }
+    smcPrimitive = null;
+  }
+
+  function attachLiqPrimitive() {
+    if (!priceSeries || liqPrimitive) return;
+    liqPrimitive = new LiqZonesPrimitive();
+    priceSeries.attachPrimitive(
+      liqPrimitive as unknown as Parameters<ISeriesApi<SeriesType>['attachPrimitive']>[0]
+    );
+  }
+  function detachLiqPrimitive() {
+    if (!priceSeries || !liqPrimitive) return;
+    try {
+      priceSeries.detachPrimitive(
+        liqPrimitive as unknown as Parameters<ISeriesApi<SeriesType>['detachPrimitive']>[0]
+      );
+    } catch { /* ignore */ }
+    liqPrimitive = null;
+  }
+
+  /** Attach/update/detach gamma pin line based on the `gammaPin` prop. */
+  function syncGammaPinPrimitive(data: GammaPinData | null) {
+    if (!priceSeries) return;
+    const hasPin = data && data.pinLevel != null;
+    if (hasPin) {
+      if (!gammaPinPrimitive) {
+        gammaPinPrimitive = new GammaPinPrimitive(data);
+        (priceSeries as ISeriesApi<SeriesType>).attachPrimitive(
+          gammaPinPrimitive as unknown as Parameters<ISeriesApi<SeriesType>['attachPrimitive']>[0]
+        );
+      } else {
+        gammaPinPrimitive.update(data);
+      }
+    } else if (gammaPinPrimitive) {
+      try {
+        (priceSeries as ISeriesApi<SeriesType>).detachPrimitive(
+          gammaPinPrimitive as unknown as Parameters<ISeriesApi<SeriesType>['detachPrimitive']>[0]
+        );
+      } catch { /* ignore */ }
+      gammaPinPrimitive = null;
+    }
+  }
+
+  // React to gamma prop changes — after priceSeries is created, keep primitive in sync.
+  $effect(() => {
+    void gammaPin;       // subscribe
+    syncGammaPinPrimitive(gammaPin);
+  });
+
+  /** Convert clientX to chart time using mainEl bounding rect. */
+  function clientXToChartTime(clientX: number): number | null {
+    if (!mainChart || !mainEl) return null;
+    const rect = mainEl.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const t = mainChart.timeScale().coordinateToTime(x);
+    if (t === null) return null;
+    return typeof t === 'number' ? t : Math.floor(new Date(t as string).getTime() / 1000);
+  }
+
+  function attachDragHandlers() {
+    if (!mainEl || _dragOnMouseMove) return;
+
+    const onMouseDown = (e: MouseEvent) => {
+      const t = clientXToChartTime(e.clientX);
+      if (t === null) return;
+      chartSaveMode.startDrag(t);
+      _dragActive = true;
+      e.preventDefault(); // block text-selection during drag
+    };
+
+    _dragOnMouseMove = (e: MouseEvent) => {
+      if (!_dragActive) return;
+      const t = clientXToChartTime(e.clientX);
+      if (t !== null) chartSaveMode.adjustAnchor('B', t);
+    };
+
+    _dragOnMouseUp = (e: MouseEvent) => {
+      if (!_dragActive) return;
+      const t = clientXToChartTime(e.clientX);
+      if (t !== null) chartSaveMode.adjustAnchor('B', t);
+      _dragActive = false;
+    };
+
+    mainEl.addEventListener('mousedown', onMouseDown);
+    mainEl.addEventListener('mousemove', _dragOnMouseMove);
+    mainEl.addEventListener('mouseup', _dragOnMouseUp);
+    // catch mouseup outside chart bounds too
+    window.addEventListener('mouseup', _dragOnMouseUp);
+  }
+
+  function detachDragHandlers() {
+    if (_dragOnMouseMove && mainEl) {
+      mainEl.removeEventListener('mousemove', _dragOnMouseMove);
+      mainEl.removeEventListener('mouseup', _dragOnMouseUp!);
+    }
+    if (_dragOnMouseUp) window.removeEventListener('mouseup', _dragOnMouseUp);
+    _dragOnMouseMove = null;
+    _dragOnMouseUp = null;
+    _dragActive = false;
+  }
+
+  // ── Pane resize handlers (Phase 4) ───────────────────────────────────────
+
+  function _onResizeMove(e: MouseEvent) {
+    if (!activeResize || !mainChart) return;
+    const deltaY = e.clientY - activeResize.startY;
+    const deltaStretch = (deltaY / activeResize.containerH) * activeResize.startTotalStretch;
+    if (activeResize.upperKind === 'price') {
+      priceStretch = Math.max(1, Math.min(12, activeResize.startStretch + deltaStretch));
+      try { mainChart.panes()[0]?.setStretchFactor(priceStretch); } catch { /* v5.0.8+ */ }
+    } else {
+      const newStretch = Math.max(0.5, Math.min(8, activeResize.startStretch + deltaStretch));
+      paneLayout.setStretch(activeResize.upperKind, newStretch);
+      // W-0407: write stretch back to per-tab PaneConfig
+      const resizeKind = activeResize!.upperKind;
+      shellStore.updateTabPanes(ps => ps.map(p =>
+        p.kind === resizeKind ? { ...p, stretch: newStretch } : p,
+      ));
+      try {
+        const idx = panePositions[resizeKind];
+        if (idx >= 0) mainChart.panes()[idx]?.setStretchFactor(newStretch);
+      } catch { /* ignore */ }
+    }
+  }
+
+  function _onResizeUp() {
+    activeResize = null;
+    window.removeEventListener('mousemove', _onResizeMove);
+    window.removeEventListener('mouseup', _onResizeUp);
+  }
+
+  function startPaneResize(e: MouseEvent, upperKind: 'price' | PaneKind) {
+    if (!mainEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const activeKinds = ORDERED_KINDS.filter(k => panePositions[k] >= 0);
+    const totalStretch = priceStretch + activeKinds.reduce((s, k) => s + paneLayout.state.stretch[k], 0);
+    const startStretch = upperKind === 'price' ? priceStretch : paneLayout.state.stretch[upperKind];
+    activeResize = {
+      upperKind,
+      startY: e.clientY,
+      startStretch,
+      startTotalStretch: totalStretch,
+      containerH: Math.max(1, mainEl.clientHeight),
+    };
+    window.addEventListener('mousemove', _onResizeMove);
+    window.addEventListener('mouseup', _onResizeUp);
+  }
+
+  function handleSaveModeChange(state: { active: boolean; anchorA: number | null; anchorB: number | null }) {
+    if (!mainChart) return;
+
+    if (state.active) {
+      // Disable LWC pan/scale so drag selects range instead of panning
+      mainChart.applyOptions({ handleScroll: false, handleScale: false });
+      attachDragHandlers();
+    } else {
+      detachDragHandlers();
+      mainChart.applyOptions({ handleScroll: true, handleScale: true });
+    }
+
+    rangePrimitive?.setRange(state.anchorA, state.anchorB);
+
+    // ResearchPanel은 SaveStrip의 "AI 분석" 버튼으로 수동 트리거
+    if (state.active && state.anchorA !== null && state.anchorB !== null) {
+      const viewport = getViewportForSave();
+      if (viewport && viewport.barCount > 0) {
+        researchViewport = viewport;
+      }
+    }
+  }
+
+  function handleRangeModeKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' && $chartSaveMode.active) {
+      chartSaveMode.exitRangeMode();
+    }
+  }
+
+  function handleDrawingModeKeydown(e: KeyboardEvent) {
+    if ((e.key === 'd' || e.key === 'D') && !$chartSaveMode.active) {
+      e.preventDefault();
+      shellStore.setDrawingTool('trendLine');
+    }
+  }
+
+  function handleIndicatorLibraryKeydown(e: KeyboardEvent) {
+    const target = e.target as HTMLElement;
+    const inInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+    if (e.key === '/' && !inInput) {
+      e.preventDefault();
+      catalogModalOpen = !catalogModalOpen;
+      if (catalogModalOpen) indicatorLibraryOpen = false;
+    }
+    if (e.key === 'Escape' && indicatorLibraryOpen) {
+      indicatorLibraryOpen = false;
+    }
+  }
+
+  // ── Price line manager (verdict / liq / whale) ─────────────────────────────
+  let priceLineMgr = new PriceLineManager();
+
+  // ── Timeframes ────────────────────────────────────────────────────────────
+  const TIMEFRAMES = ['1m','3m','5m','15m','30m','1h','2h','4h','6h','12h','1d','1w'];
+  const EMA_TF_PRIORITIES = ['15m', '1h', '4h', '1d', '1w'];
+
+  /** EMA computed on this TF then aligned to chart bars; '' = same as chart (no MTF request). */
+  let emaTf = $state('');
+  let emaTfOptions = $derived(TIMEFRAMES.filter((t) => tfMinutes(t) > tfMinutes(tf)));
+  let emaTfQuickOptions = $derived.by(() => {
+    const higher = TIMEFRAMES.filter((t) => tfMinutes(t) > tfMinutes(tf));
+    const picked: string[] = [];
+
+    for (const candidate of EMA_TF_PRIORITIES) {
+      if (higher.includes(candidate) && !picked.includes(candidate)) picked.push(candidate);
+      if (picked.length === 3) return picked;
+    }
+
+    for (const candidate of higher) {
+      if (!picked.includes(candidate)) picked.push(candidate);
+      if (picked.length === 3) break;
+    }
+
+    return picked;
+  });
+
+  $effect(() => {
+    void tf;
+    if (emaTf && !emaTfOptions.includes(emaTf)) {
+      emaTf = '';
+    }
+  });
+
+  // ── Theme (TradingView-inspired dark) ─────────────────────────────────────
+  const BG    = '#131722';
+  const GRID  = 'rgba(42,46,57,0.9)';
+  const TEXT  = 'rgba(177,181,189,0.85)';
+  const BORDER = 'rgba(42,46,57,1)';
+
+  const baseTheme = {
+    handleScroll: true,
+    handleScale: true,
+    layout: { background: { color: BG }, textColor: TEXT, fontSize: 10, fontFamily: 'var(--sc-font-mono, monospace)' },
+    grid:   { vertLines: { color: GRID }, horzLines: { color: GRID } },
+    crosshair: {
+      vertLine: { color: 'rgba(255,255,255,0.2)', width: 1 as const, style: 3 },
+      horzLine: { color: 'rgba(255,255,255,0.2)', width: 1 as const, style: 3 },
+    },
+    timeScale: { borderColor: BORDER, timeVisible: true, secondsVisible: false },
+    rightPriceScale: { borderColor: BORDER },
+  };
+
+  /** Viewport width for responsive UI choices (toolbar / context strip). */
+  let viewportWidth = $state<number | null>(null);
+  // Native multi-pane handles per-pane sizing via setStretchFactor — no manual
+  // pane-height constants needed.
+
+  const volumeProfileRows = $derived.by(() => {
+    const bars = chartData?.klines?.slice(-180) ?? [];
+    if (bars.length < 8) return [];
+    const high = Math.max(...bars.map((bar) => bar.high));
+    const low = Math.min(...bars.map((bar) => bar.low));
+    const span = Math.max(1e-9, high - low);
+    const bucketCount = 22;
+    const buckets = Array.from({ length: bucketCount }, (_, index) => ({
+      price: high - (span * index) / Math.max(1, bucketCount - 1),
+      bid: 0,
+      ask: 0,
+      total: 0,
+    }));
+
+    for (const bar of bars) {
+      const idx = Math.max(0, Math.min(bucketCount - 1, Math.floor(((high - bar.close) / span) * bucketCount)));
+      const closePos = Math.max(0, Math.min(1, (bar.close - bar.low) / Math.max(1e-9, bar.high - bar.low)));
+      const ask = bar.volume * (0.3 + closePos * 0.58);
+      const bid = Math.max(0, bar.volume - ask);
+      buckets[idx].bid += bid;
+      buckets[idx].ask += ask;
+      buckets[idx].total += bar.volume;
+    }
+
+    const maxTotal = Math.max(1, ...buckets.map((bucket) => bucket.total));
+    return buckets.map((bucket) => ({
+      price: bucket.price,
+      bidWidth: `${Math.max(2, Math.min(100, (bucket.bid / maxTotal) * 100))}%`,
+      askWidth: `${Math.max(2, Math.min(100, (bucket.ask / maxTotal) * 100))}%`,
+      opacity: 0.24 + Math.min(0.76, bucket.total / maxTotal),
+      isPoc: bucket.total === maxTotal,
+    }));
+  });
+
+  const veloCaption = $derived.by(() => {
+    const bars = chartData?.klines ?? [];
+    const last = bars[bars.length - 1];
+    const prev = bars[bars.length - 2];
+    if (!last) return null;
+    const change = prev?.close ? ((last.close - prev.close) / prev.close) * 100 : 0;
+    return {
+      o: last.open,
+      h: last.high,
+      l: last.low,
+      c: last.close,
+      change,
+    };
+  });
+
+  function formatCaptureTime(ts: number): string {
+    return new Date(ts * 1000).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  }
+
+  function refreshCaptureWindowSummary() {
+    const viewport = getViewportForSave();
+    if (!viewport || viewport.barCount <= 0 || viewport.klines.length === 0) {
+      captureWindowLabel = 'Visible range capture unavailable';
+      captureBarCount = null;
+      return;
+    }
+    const first = viewport.klines[0]?.time ?? viewport.timeFrom;
+    const last = viewport.klines[viewport.klines.length - 1]?.time ?? viewport.timeTo;
+    captureWindowLabel = `${formatCaptureTime(first)} -> ${formatCaptureTime(last)}`;
+    captureBarCount = viewport.barCount;
+  }
+
+  /**
+   * Native multi-pane: the chart owns the full host element height. Indicator
+   * pane heights inside are governed by `setStretchFactor` on each pane.
+   */
+  function measureChartHostHeight(): number {
+    const h = mainEl?.clientHeight ?? 0;
+    if (h > 200) return h;
+    return 520; // sensible default — fills price + 4 panes comfortably
+  }
+
+  // ── Data load — delegated to useChartDataFeed composable ─────────────────
+  const feed = useChartDataFeed({
+    getSymbol: () => symbol,
+    getTf: () => tf,
+    getEmaTf: () => emaTf,
+    getInitialData: () => initialData ?? null,
+    getChart: () => mainChart,
+    getPriceSeries: () => priceSeries,
+    getShouldLoadFullFeed: () => showOI || showFundingPane || showLiqPane || Boolean(emaTf),
+    getQuickIndicatorDemand: () => ({
+      ema: showEMA,
+      bb: showBB,
+      vwap: showVWAP,
+      atr: showATRBands,
+      rsi: showRSI,
+      macd: showMACD,
+    }),
+  });
+
+  // Accessor aliases so existing code reads naturally
+  let loading = $derived(feed.loading);
+  let error = $derived(feed.error);
+  let rateLimitRetryIn = $derived(feed.rateLimitRetryIn);
+  let chartData = $derived(feed.chartData);
+  let hasRenderableChart = $derived(Boolean(chartData?.klines?.length));
+  let fatalChartError = $derived(Boolean(error) && !hasRenderableChart);
+  let passiveChartError = $derived(Boolean(error) && hasRenderableChart);
+
+  // W-T5: aggregated perp fallback — fetched when toggle is ON but chart payload has no data
+  let aggOiBars     = $state<Array<{ time: number; value: number; color: string }>>([]);
+  let aggFundingBars = $state<Array<{ time: number; value: number; color: string }>>([]);
+
+  $effect(() => {
+    const sym = symbol;
+    const needOI      = showOI      && !(chartData?.oiBars?.length);
+    const needFunding = showFundingPane && !(chartData?.fundingBars?.length);
+    if (!sym || (!needOI && !needFunding)) return;
+
+    void (async () => {
+      const [oiRes, fundRes] = await Promise.allSettled([
+        needOI      ? fetch(`/api/indicators/aggregated/oi?symbol=${sym}&limit=500`)      : Promise.resolve(null),
+        needFunding ? fetch(`/api/indicators/aggregated/funding?symbol=${sym}&limit=500`) : Promise.resolve(null),
+      ]);
+      if (oiRes.status === 'fulfilled' && oiRes.value?.ok) {
+        const d = (await oiRes.value.json()) as { points?: Array<{ t: number; v: number }> };
+        if (d.points?.length) {
+          aggOiBars = d.points.map((p) => ({ time: Math.floor(p.t / 1000), value: p.v, color: '#63b3ed' }));
+        }
+      }
+      if (fundRes.status === 'fulfilled' && fundRes.value?.ok) {
+        const d = (await fundRes.value.json()) as { points?: Array<{ t: number; v: number }> };
+        if (d.points?.length) {
+          aggFundingBars = d.points.map((p) => ({
+            time: Math.floor(p.t / 1000),
+            value: p.v,
+            color: p.v >= 0 ? 'rgba(52,211,153,0.8)' : 'rgba(248,113,113,0.8)',
+          }));
+        }
+      }
+    })();
+  });
+
+  // Effective payload: base chart payload with aggregated fallback for missing perp series.
+  const effectiveChartData = $derived(
+    chartData
+      ? {
+          ...chartData,
+          oiBars:      chartData.oiBars?.length      ? chartData.oiBars      : aggOiBars,
+          fundingBars: chartData.fundingBars?.length  ? chartData.fundingBars : aggFundingBars,
+        }
+      : null,
+  );
+
+  // Keep chartSaveMode payload in sync so SaveStrip can slice indicators (W-0117 Slice B)
+  $effect(() => {
+    chartSaveMode.setPayload(effectiveChartData);
+    if (effectiveChartData) setChartFreshness(Date.now());
+  });
+
+  // ── Pane info chips (current value + Δ for each line in each pane) ───────
+  // Recomputed any time chartData / tf changes. Cheap (O(N) per pane).
+  const oiChips = $derived.by(() => {
+    if (!effectiveChartData?.oiBars?.length) return null;
+    return computePaneChips('oi', effectiveChartData.oiBars.map((b) => ({ time: b.time, value: b.value })), tf);
+  });
+  const cvdChips = $derived.by(() => {
+    if (!chartData) return null;
+    const raw = chartData.cvdBars?.length
+      ? chartData.cvdBars.map((b) => ({ time: b.time, value: b.value }))
+      : (() => {
+          let cum = 0;
+          return (chartData.klines ?? []).map((k) => {
+            cum += (k.close >= k.open ? 1 : -1) * k.volume;
+            return { time: k.time, value: cum };
+          });
+        })();
+    if (raw.length === 0) return null;
+    return computePaneChips('cvd', raw, tf);
+  });
+  const fundingChips = $derived.by(() => {
+    if (!effectiveChartData?.fundingBars?.length) return null;
+    return computePaneChips('funding', effectiveChartData.fundingBars.map((b) => ({ time: b.time, value: b.value })), tf);
+  });
+  const liqChips = $derived.by(() => {
+    if (!effectiveChartData?.liqBars?.length) return null;
+    return computeLiqChips(effectiveChartData.liqBars, tf);
+  });
+  const obvChips = $derived.by(() => {
+    const kl = chartData?.klines;
+    if (!kl?.length || !showOBV) return null;
+    let acc = 0;
+    const obvRaw: { time: number; value: number }[] = kl.map((k, i) => {
+      if (i > 0) {
+        if (k.close > kl[i - 1].close) acc += k.volume;
+        else if (k.close < kl[i - 1].close) acc -= k.volume;
+      }
+      return { time: k.time, value: acc };
+    });
+    return computePaneChips('obv', obvRaw, tf);
+  });
+  const rsiOrMacdChips = $derived.by(() => {
+    if (!chartData) return null;
+    if (showMACD) {
+      const macdArr = (chartData.indicators as Record<string, unknown>)?.macd as
+        Array<{ time: number; macd: number; signal: number; hist: number }> | undefined;
+      if (!macdArr?.length) return null;
+      const last = macdArr[macdArr.length - 1];
+      return [
+        { key: 'macd',   color: '#63b3ed', label: 'MACD',   value: last.macd.toFixed(4) },
+        { key: 'signal', color: '#fbbf24', label: 'signal', value: last.signal.toFixed(4) },
+        {
+          key: 'hist', label: 'hist',
+          color: last.hist >= 0 ? 'rgba(38,166,154,0.9)' : 'rgba(239,83,80,0.9)',
+          value: last.hist.toFixed(4),
+          tone: (last.hist >= 0 ? 'bull' : 'bear') as 'bull' | 'bear',
+        },
+      ];
+    }
+    if (showRSI) {
+      const rsiArr = (chartData.indicators as Record<string, unknown>)?.rsi14 as
+        Array<{ time: number; value: number }> | undefined;
+      if (!rsiArr?.length) return null;
+      const v = rsiArr[rsiArr.length - 1].value;
+      return [{ key: 'rsi', color: '#fbbf24', label: 'RSI 14', value: v.toFixed(2) }];
+    }
+    return null;
+  });
+
+  // Bundle for the KPI strip
+  const kpiBundle = $derived<KpiInputBundle>({
+    chart: chartData,
+    depth: depthData,
+    liq: liqData,
+    feedStatus: _dataFeed ? 'ws' : 'poll',
+  });
+  // ── History lazy-load ────────────────────────────────────────────────────
+  const LAZY_TRIGGER_BARS = 30; // fetch more when within this many bars of the left edge
+
+  // ── DataFeed: resilient WS + polling (replaces bare connectKlineWS) ────────
+
+  function initDataFeed(sym: string, timeframe: string) {
+    if (typeof window === 'undefined') return;
+    _dataFeed?.disconnect();
+    _dataFeed = new DataFeed({ symbol: sym, tf: timeframe });
+
+    // Live tick → update price series in real-time
+    _dataFeed.onBar = (bar, isClosed) => {
+      (priceSeries as ISeriesApi<'Candlestick'> | null)?.update({
+        time:  bar.time as UTCTimestamp,
+        open:  bar.open,
+        high:  bar.high,
+        low:   bar.low,
+        close: bar.close,
+      });
+      _liveBarPrice = bar.close;
+      liveTick.update({ price: bar.close });
+      if (isClosed) onCandleClose?.(bar);
+    };
+
+    // Initial historical load → render liq sub-pane
+    _dataFeed.onLoad = (payload) => {
+      if (payload.liqBars?.length) _initLiqPane(payload.liqBars);
+    };
+
+    // Poll refresh (60s) → update liq pane with fresh data
+    _dataFeed.onPoll = (payload) => {
+      if (payload.liqBars?.length) _refreshLiqPane(payload.liqBars);
+    };
+
+    void _dataFeed.connect();
+  }
+
+  function disconnectFeed() {
+    _dataFeed?.disconnect();
+    _dataFeed = null;
+  }
+
+  // Legacy alias used by existing $effect below — keeps change minimal
+  function connectKlineWS(sym: string, timeframe: string) { initDataFeed(sym, timeframe); }
+  function disconnectWS() { disconnectFeed(); }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  type LinePoint  = { time: UTCTimestamp; value: number };
+  type HistoPoint = { time: UTCTimestamp; value: number; color?: string };
+
+  function toLine(arr: Array<{ time: number; value: number }>): LinePoint[] {
+    return arr
+      .filter((p) => Number.isFinite(p.value))
+      .map((p) => ({ time: p.time as UTCTimestamp, value: p.value }));
+  }
+  function toHisto(arr: Array<{ time: number; value: number; color?: string }>): HistoPoint[] {
+    return arr.map(p => ({ time: p.time as UTCTimestamp, value: p.value, color: p.color }));
+  }
+
+  function indicatorInstanceSignature(): string {
+    return indicatorInstances.instances
+      .filter((inst) => inst.style.visible)
+      .map((inst) => `${inst.instanceId}:${inst.engineKey}:${JSON.stringify(inst.params)}`)
+      .join('|');
+  }
+
+  function renderSignature(data: ChartSeriesPayload): string {
+    const lastKline = data.klines[data.klines.length - 1];
+    const visibleIndicators = (data.indicators ?? {}) as Record<string, unknown>;
+    const comparisonBars = $comparisonStore.data;
+    const indicatorLen = (key: string) => {
+      const series = visibleIndicators[key];
+      return Array.isArray(series) ? series.length : 0;
+    };
+    return JSON.stringify({
+      symbol,
+      tf,
+      chartMode,
+      priceScaleMode,
+      surfaceStyle,
+      emaTf,
+      showEMA,
+      showBB,
+      showVWAP,
+      showVWMA,
+      showATRBands,
+      showCVD,
+      showMACD,
+      showRSI,
+      showOI,
+      showFundingPane,
+      showLiqPane,
+      showVolume,
+      showOBV,
+      derivativesOnMain,
+      cvdDivergence,
+      showComparison,
+      showHeatmap,
+      klinesLen: data.klines.length,
+      lastKlineTime: lastKline?.time ?? null,
+      lastKlineClose: lastKline?.close ?? null,
+      emaLen: showEMA ? indicatorLen('ema') : 0,
+      bbLen: showBB ? indicatorLen('bb_upper') + indicatorLen('bb_lower') : 0,
+      vwapLen: showVWAP ? indicatorLen('vwap') : 0,
+      vwmaLen: showVWMA ? data.klines.length : 0,
+      atrLen: showATRBands ? indicatorLen('atr_upper') + indicatorLen('atr_lower') : 0,
+      cvdLen: showCVD ? (data.cvdBars?.length ?? 0) : 0,
+      macdLen: showMACD ? indicatorLen('macd') + indicatorLen('macd_signal') : 0,
+      rsiLen: showRSI ? indicatorLen('rsi') : 0,
+      oiLen: showOI ? (data.oiBars?.length ?? 0) : 0,
+      fundingLen: showFundingPane || derivativesOnMain ? (data.fundingBars?.length ?? 0) : 0,
+      liqLen: showLiqPane ? (data.liqBars?.length ?? 0) : 0,
+      obvLen: showOBV ? indicatorLen('obv') : 0,
+      comparisonLen: showComparison ? comparisonBars.length : 0,
+      heatmapLen: showHeatmap ? volumeProfileRows.length : 0,
+      indicatorInstances: indicatorInstanceSignature(),
+    });
+  }
+
+  function scheduleRender(data: ChartSeriesPayload) {
+    _pendingRenderData = data;
+    if (_renderScheduled) return;
+    _renderScheduled = true;
+    _renderFrame = requestAnimationFrame(() => {
+      _renderScheduled = false;
+      _renderFrame = null;
+      const next = _pendingRenderData;
+      _pendingRenderData = null;
+      if (!next || loading) return;
+      const signature = renderSignature(next);
+      if (mainChart && signature === _lastRenderSignature) return;
+      renderCharts(next);
+      _lastRenderSignature = signature;
+      refreshCaptureWindowSummary();
+    });
+  }
+
+  function renderCharts(data: ChartSeriesPayload) {
+    if (!mainEl) return;
+    destroyCharts();
+
+    const _renderStart = performance.now();
+    let candleSeriesRef: ISeriesApi<'Candlestick'> | null = null;
+
+    const w = containerEl?.offsetWidth ?? 900;
+
+    const ind = data.indicators as Record<string, Array<{ time: number; value: number }>>;
+    const klines = data.klines as Array<{ time: number; open: number; close: number; high: number; low: number; volume: number }>;
+    const oiBars = data.oiBars as Array<{ time: number; value: number; color: string }>;
+    const fundingBars = data.fundingBars as Array<{ time: number; value: number; color: string }> | undefined;
+    const cvdRaw = data.cvdBars as Array<{ time: number; value: number }> | undefined;
+
+    const cvdCumBars: Array<{ time: number; value: number }> = cvdRaw?.length
+      ? cvdRaw
+      : (() => {
+          let acc = 0;
+          return klines.map((k) => {
+            const signedVol = (k.close >= k.open ? 1 : -1) * k.volume;
+            acc += signedVol;
+            return { time: k.time, value: acc };
+          });
+        })();
+
+    // Main chart overlays only host true price-aligned studies (EMA / BB /
+    // VWAP / ATR bands) plus the CQ-style Funding % line on the left axis.
+    // CVD is a sub-pane indicator — it belongs in `.pane-cvd`, never on the
+    // price pane (user feedback 2026-04-19: "보조지표만 같이 나오고 나머지는
+    // 하단으로 붙어야지").
+    const hasFundingOverlay =
+      derivativesOnMain && (chartMode === 'candle' || chartMode === 'bar' || chartMode === 'heikin') && Boolean(fundingBars?.length);
+    const mainChartHeight = measureChartHostHeight();
+
+    // ── Main (candles + overlays) ────────────────────────────────────────────
+    mainChart = createChart(mainEl, {
+      ...baseTheme,
+      width: w,
+      height: mainChartHeight,
+      rightPriceScale: {
+        ...baseTheme.rightPriceScale,
+        scaleMargins: { top: 0.08, bottom: 0.08 },
+        mode: priceScaleMode === 'log'
+          ? PriceScaleMode.Logarithmic
+          : priceScaleMode === 'percent'
+            ? PriceScaleMode.Percentage
+            : PriceScaleMode.Normal,
+      },
+      leftPriceScale: hasFundingOverlay
+        ? { visible: true, borderColor: BORDER, scaleMargins: { top: 0.06, bottom: 0.06 } }
+        : { visible: false },
+    });
+
+    mainChart.timeScale().applyOptions({
+      barSpacing: TF_BAR_SPACING[tf] ?? 8,
+      minBarSpacing: TF_MIN_BAR_SPACING[tf] ?? 4,
+    });
+
+    const lastBar = klines[klines.length - 1];
+    const prevBar = klines[klines.length - 2];
+    _liveBarPrice = lastBar?.close ?? null;
+    liveTick.update({
+      price:     lastBar?.close ?? null,
+      time:      lastBar?.time  ?? null,
+      changePct: lastBar && prevBar && prevBar.close > 0 ? ((lastBar.close - prevBar.close) / prevBar.close) * 100 : null,
+      oiDelta:   oiBars?.length ? oiBars[oiBars.length - 1]?.value ?? null : null,
+    });
+
+    if (chartMode === 'line') {
+      const lineSeries = mainChart.addSeries(LineSeries, {
+        color: '#63b3ed',
+        lineWidth: 1,
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+      lineSeries.setData(klines.map((k) => ({ time: k.time as UTCTimestamp, value: k.close })));
+      priceSeries = lineSeries;
+      candleSeriesForAnnotations = null;
+      candleMarkerApi = null;
+    } else if (chartMode === 'area') {
+      const areaSeries = mainChart.addSeries(AreaSeries, {
+        lineColor: '#63b3ed',
+        topColor: 'rgba(99,179,237,0.3)',
+        bottomColor: 'rgba(99,179,237,0)',
+        lineWidth: 1,
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+      areaSeries.setData(klines.map((k) => ({ time: k.time as UTCTimestamp, value: k.close })));
+      priceSeries = areaSeries;
+      candleSeriesForAnnotations = null;
+      candleMarkerApi = null;
+    } else if (chartMode === 'bar') {
+      const barSeries = mainChart.addSeries(BarSeries, {
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        openVisible: true,
+        thinBars: false,
+      });
+      barSeries.setData(klines.map((bar) => ({
+        time: bar.time as UTCTimestamp,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+      })));
+      priceSeries = barSeries;
+      candleSeriesForAnnotations = null;
+      candleMarkerApi = null;
+    } else if (chartMode === 'heikin') {
+      // Heikin Ashi calculation
+      const haBars = klines.map((bar, i) => {
+        const prev = i > 0 ? klines[i - 1] : bar;
+        const haClose = (bar.open + bar.high + bar.low + bar.close) / 4;
+        const haOpen = i === 0 ? (bar.open + bar.close) / 2 : (prev.open + prev.close) / 2;
+        const haHigh = Math.max(bar.high, haOpen, haClose);
+        const haLow = Math.min(bar.low, haOpen, haClose);
+        return { time: bar.time as UTCTimestamp, open: haOpen, high: haHigh, low: haLow, close: haClose };
+      });
+      const haSeries = mainChart.addSeries(CandlestickSeries, {
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderUpColor: '#26a69a',
+        borderDownColor: '#ef5350',
+        wickUpColor: 'rgba(38,166,154,0.7)',
+        wickDownColor: 'rgba(239,83,80,0.7)',
+      });
+      haSeries.setData(haBars);
+      priceSeries = haSeries;
+      candleSeriesForAnnotations = null;
+      candleMarkerApi = null;
+    } else {
+      // Default: candlestick
+      const candleSeries = mainChart.addSeries(CandlestickSeries, {
+        upColor:        '#26a69a',
+        downColor:      '#ef5350',
+        borderUpColor:  '#26a69a',
+        borderDownColor:'#ef5350',
+        wickUpColor:    'rgba(38,166,154,0.7)',
+        wickDownColor:  'rgba(239,83,80,0.7)',
+      });
+      candleSeries.setData(
+        klines.map((bar) => ({
+          time: bar.time as UTCTimestamp,
+          open: bar.open,
+          high: bar.high,
+          low: bar.low,
+          close: bar.close,
+        }))
+      );
+      candleSeriesRef = candleSeries;
+      candleMarkerApi = createSeriesMarkers(candleSeries, []);
+      priceSeries = candleSeries;
+      candleSeriesForAnnotations = candleSeries;  // Layer 3: capture overlay
+      // Attach range primitive to candlestick series (Layer 1, W-0086)
+      attachRangePrimitive();
+    }
+
+    // SMA 20 / 60 — always on
+    if (ind.sma20?.length) {
+      const s = mainChart.addSeries(LineSeries, { color: '#fbbf24', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+      s.setData(toLine(ind.sma20));
+    }
+    if (ind.sma60?.length) {
+      const s = mainChart.addSeries(LineSeries, { color: '#a78bfa', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+      s.setData(toLine(ind.sma60));
+    }
+    // SMA 5
+    if (ind.sma5?.length) {
+      const s = mainChart.addSeries(LineSeries, { color: 'rgba(99,179,237,0.7)', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+      s.setData(toLine(ind.sma5));
+    }
+
+    // W-0210 Layer 3: Comparison overlay — normalized BTC (or benchmark) on same panel
+    // Uses a dedicated right price scale so it doesn't distort the main price scale.
+    if (showComparison && symbol !== COMPARISON_SYMBOL) {
+      const compData = $comparisonStore.data;
+      if (compData.length) {
+        // Normalize main symbol klines to same 100-base for fair comparison
+        const mainBase = klines[0]?.close;
+        if (mainBase) {
+          const mainNorm = klines.map(k => ({
+            time: k.time as UTCTimestamp,
+            value: (k.close / mainBase) * 100,
+          }));
+
+          // Add main series normalized line (on comparison scale)
+          const mainNormSeries = mainChart.addSeries(LineSeries, {
+            color: 'rgba(255,199,80,0.5)',
+            lineWidth: 1 as const,
+            priceScaleId: 'comparison',
+            lastValueVisible: false,
+            priceLineVisible: false,
+            title: symbol.replace('USDT', ''),
+          });
+          mainNormSeries.setData(mainNorm);
+
+          // Add BTC normalized line
+          const compSeries = mainChart.addSeries(LineSeries, {
+            color: 'rgba(75,158,253,0.65)',
+            lineWidth: 1 as const,
+            priceScaleId: 'comparison',
+            lastValueVisible: true,
+            priceLineVisible: false,
+            title: 'BTC',
+          });
+          compSeries.setData(compData);
+
+          // Configure shared comparison price scale (right-side, minimal footprint)
+          mainChart.priceScale('comparison').applyOptions({
+            visible: false,  // hide axis — relative values are less meaningful
+            scaleMargins: { top: 0.05, bottom: 0.05 },
+          });
+        }
+      }
+    }
+
+    // VWAP toggle
+    if (showVWAP && ind.vwap?.length) {
+      const s = mainChart.addSeries(LineSeries, {
+        color: 'rgba(255,200,60,0.88)',
+        lineWidth: 2,
+        lineStyle: 1 as const,
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+      s.setData(toLine(ind.vwap));
+    }
+
+    // VWMA 100 — first-class overlay toggle for chart-first reading.
+    if (showVWMA) {
+      const vwma100 = calcVWMA(klines, 100);
+      if (vwma100.length) {
+        const s = mainChart.addSeries(LineSeries, {
+          color: 'rgba(114,186,255,0.82)',
+          lineWidth: 2,
+          lastValueVisible: true,
+          priceLineVisible: false,
+          title: 'VWMA 100',
+        });
+        s.setData(toLine(vwma100));
+      }
+    }
+
+    // EMA engine overlays (chart TF solid; optional HTF EMA aligned to bar times — dashed, TV-style)
+    if (showEMA) {
+      const emaFast = ind.ema21 ?? ind.ema20;
+      const emaSlow = ind.ema55 ?? ind.ema60;
+      const emaFastMtf = ind.ema21_mtf as Array<{ time: number; value: number }> | undefined;
+      const emaSlowMtf = ind.ema55_mtf as Array<{ time: number; value: number }> | undefined;
+      const hasMtf =
+        Array.isArray(emaFastMtf) &&
+        emaFastMtf.length > 0 &&
+        Array.isArray(emaSlowMtf) &&
+        emaSlowMtf.length > 0;
+
+      if (hasMtf) {
+        if (emaFast?.length) {
+          const s = mainChart.addSeries(LineSeries, { color: 'rgba(64,196,255,0.38)', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+          s.setData(toLine(emaFast));
+        }
+        if (emaSlow?.length) {
+          const s = mainChart.addSeries(LineSeries, { color: 'rgba(255,152,0,0.38)', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+          s.setData(toLine(emaSlow));
+        }
+        if (emaFastMtf?.length) {
+          const s = mainChart.addSeries(LineSeries, { color: 'rgba(64,196,255,0.95)', lineWidth: 1, lineStyle: 2 as const, lastValueVisible: true, priceLineVisible: false });
+          s.setData(toLine(emaFastMtf));
+        }
+        if (emaSlowMtf?.length) {
+          const s = mainChart.addSeries(LineSeries, { color: 'rgba(255,152,0,0.95)', lineWidth: 1, lineStyle: 2 as const, lastValueVisible: true, priceLineVisible: false });
+          s.setData(toLine(emaSlowMtf));
+        }
+      } else {
+        if (emaFast?.length) {
+          const s = mainChart.addSeries(LineSeries, { color: 'rgba(64,196,255,0.9)', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+          s.setData(toLine(emaFast));
+        }
+        if (emaSlow?.length) {
+          const s = mainChart.addSeries(LineSeries, { color: 'rgba(255,152,0,0.9)', lineWidth: 1, lastValueVisible: false, priceLineVisible: false });
+          s.setData(toLine(emaSlow));
+        }
+      }
+    }
+
+    // ATR channel proxy: SMA20 +/- ATR14
+    if (showATRBands && ind.sma20?.length && ind.atr14?.length) {
+      const atrMap = new Map(ind.atr14.map((p) => [p.time, p.value]));
+      const upper = ind.sma20.map((p) => ({ time: p.time, value: p.value + (atrMap.get(p.time) ?? 0) }));
+      const lower = ind.sma20.map((p) => ({ time: p.time, value: p.value - (atrMap.get(p.time) ?? 0) }));
+      const up = mainChart.addSeries(LineSeries, { color: 'rgba(255,255,255,0.28)', lineWidth: 1, lineStyle: 2 as const, lastValueVisible: false, priceLineVisible: false });
+      const lo = mainChart.addSeries(LineSeries, { color: 'rgba(255,255,255,0.28)', lineWidth: 1, lineStyle: 2 as const, lastValueVisible: false, priceLineVisible: false });
+      up.setData(toLine(upper));
+      lo.setData(toLine(lower));
+    }
+
+    // Bollinger Bands toggle
+    if (showBB) {
+      const bbU = ind.bbUpper as Array<{ time: number; value: number }>;
+      const bbL = ind.bbLower as Array<{ time: number; value: number }>;
+      if (bbU?.length) {
+        const su = mainChart.addSeries(LineSeries, { color: 'rgba(139,92,246,0.5)', lineWidth: 1, lineStyle: 2 as const, lastValueVisible: false, priceLineVisible: false });
+        su.setData(toLine(bbU));
+        const sl = mainChart.addSeries(LineSeries, { color: 'rgba(139,92,246,0.5)', lineWidth: 1, lineStyle: 2 as const, lastValueVisible: false, priceLineVisible: false });
+        sl.setData(toLine(bbL));
+      }
+    }
+
+    // Fund % on main pane (left axis, shared time axis — CryptoQuant-style
+    // derivative overlay on price). CVD moved out to the sub-pane.
+    if (hasFundingOverlay && fundingBars != null && fundingBars.length > 0) {
+      const fMain = mainChart.addSeries(LineSeries, {
+        priceScaleId: 'left',
+        color: 'rgba(251,191,36,0.92)',
+        lineWidth: 1,
+        priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
+        lastValueVisible: true,
+        priceLineVisible: false,
+      });
+      fMain.setData(toLine(fundingBars.map((f) => ({ time: f.time, value: f.value }))));
+    }
+
+    // Verdict price levels + liquidation rails (price-scale aligned)
+    updateLevels();
+    applyLiqPriceLines();
+
+    if (candleSeriesRef && klines.length) {
+      const markers: SeriesMarker<UTCTimestamp>[] = [];
+      const t = klines[klines.length - 1].time as UTCTimestamp;
+      if (cvdDivergence?.state === 'bullish_divergence') {
+        markers.push({
+          time: t,
+          position: 'belowBar',
+          color: '#4ade80',
+          shape: 'arrowUp',
+          text: 'CVD',
+        });
+      } else if (cvdDivergence?.state === 'bearish_divergence') {
+        markers.push({
+          time: t,
+          position: 'aboveBar',
+          color: '#f87171',
+          shape: 'arrowDown',
+          text: 'CVD',
+        });
+      }
+      // Alpha phase markers (W-0116): phase transitions overlaid on candles
+      if (alphaMarkers?.length) {
+        for (const am of alphaMarkers) {
+          markers.push({
+            time: am.timestamp as UTCTimestamp,
+            position: 'belowBar',
+            color: am.color ?? '#a78bfa',
+            shape: 'circle',
+            text: am.label ?? am.phase,
+          });
+        }
+      }
+      // W-0358 + W-0521: note markers only in _baseMarkers (screener/news via $effect)
+      _baseMarkers = [...markers, ...chartNotesStore.markers];
+      const _sHits = screenerMarkers.getHits(symbol, tf);
+      const _nHits = newsMarkersStore.getMarkers(symbol, tf);
+      const screenerMs: SeriesMarker<UTCTimestamp>[] = _sHits.map((h) => ({
+        time: h.timestamp as UTCTimestamp,
+        position: 'belowBar' as const,
+        color: '#2dd4bf',
+        shape: 'arrowUp' as const,
+        text: '▲',
+      }));
+      const allMarkers = [..._baseMarkers, ..._nHits, ...screenerMs]
+        .sort((a, b) => (a.time as number) - (b.time as number));
+      candleMarkerApi?.setMarkers(allMarkers);
+    }
+
+    // W-0210 Layer 1: Alpha overlay — ATR levels + phase markers from analysisData
+    syncAlphaOverlay();
+
+    mainChart.subscribeCrosshairMove((param) => {
+      if (param.time) {
+        const series = priceSeries;
+        const d = series ? param.seriesData.get(series) as { close?: number; value?: number } | undefined : undefined;
+        liveTick.update({
+          time:  param.time as number,
+          price: d?.close ?? d?.value ?? liveTick.price,
+        });
+        onCrosshairMove?.(param.time as UTCTimestamp);
+      } else {
+        // Restore live price when cursor leaves chart — prevents crosshair value
+        // from sticking as "current price" after hover (causes TF mismatch display).
+        if (_liveBarPrice !== null) liveTick.update({ price: _liveBarPrice });
+        onCrosshairMove?.(null);
+      }
+    });
+
+    // W-0358: note marker click — open NotePanel view for matching note
+    mainChart.subscribeClick((param) => {
+      if (!param.time || !chartNotesStore.showNotes || chartNotesStore.notes.length === 0) return;
+      const clickTs = typeof param.time === 'number'
+        ? param.time
+        : Math.floor(new Date(param.time as string).getTime() / 1000);
+      const barSec = _tfToSec(tf);
+      const tolerance = barSec * 0.6;
+      const hit = chartNotesStore.notes.find(n => Math.abs(n.bar_time - clickTs) <= tolerance);
+      if (hit) chartNotesStore.openView(hit);
+    });
+
+    // Capture annotation click: open drawer for nearest marker within ±2 bars (W-0124)
+    mainChart.subscribeClick((param) => {
+      if (!param.time || !_annotationsCache.length || selectedCapture) return;
+      const ts = typeof param.time === 'number'
+        ? param.time
+        : Math.floor(new Date(param.time as string).getTime() / 1000);
+      const threshold = _tfToSec(tf) * 2;
+      let nearest: CaptureAnnotation | null = null;
+      let nearestDist = Infinity;
+      for (const ann of _annotationsCache) {
+        const d = Math.abs(ann.captured_at_s - ts);
+        if (d < nearestDist) { nearestDist = d; nearest = ann; }
+      }
+      if (nearest && nearestDist <= threshold) {
+        selectedCapture = nearest;
+      }
+    });
+
+    // ── Indicator panes (native lightweight-charts v5.1 multi-pane) ─────────
+    // Volume sits inside pane 0 (price) on its own price scale, pinned to the
+    // bottom 20% — keeps price + volume colocated, the way most traders read.
+    const mountResult = mountIndicatorPanesModule(mainChart, data, klines, ind, {
+      showVolume,
+      showRSI,
+      showMACD,
+      showOI,
+      showCVD,
+      cvdVisualMode,
+      showFundingPane,
+      showLiqPane,
+      showOBV,
+      heatmapVolume: showHeatmap,
+    }, tf);
+    panePositions = mountResult.positions;
+    indicatorSeriesRefs = mountResult.seriesRefs;
+
+    // Mount secondary indicator instances (multi-instance — W-0399-p2)
+    const posVals = Object.values(mountResult.positions).filter((v) => v >= 0);
+    let nextExtraPane = posVals.length ? Math.max(...posVals) + 1 : 1;
+    secondaryPaneInfos = [];
+    for (const inst of indicatorInstances.instances) {
+      if (!inst.style.visible) continue;
+      const key = inst.engineKey;
+      const p = inst.params;
+      const overlay = isOverlayIndicator(key);
+      const targetPane = overlay ? 0 : nextExtraPane;
+
+      let secPayload: SecondaryIndicatorPayload | null = null;
+
+      if (key === 'rsi') {
+        secPayload = { engineKey: 'rsi', data: calcRSI(klines, (p.period as number) || 14) };
+      } else if (key === 'macd') {
+        secPayload = { engineKey: 'macd', data: calcMACD(klines, (p.fast as number) || 12, (p.slow as number) || 26, (p.signal as number) || 9) };
+      } else if (key === 'ema') {
+        const period = (p.period as number) || 21;
+        secPayload = { engineKey: 'ema', data: calcEMAValues(klines, period), label: `EMA ${period}` };
+      } else if (key.startsWith('vwma_')) {
+        const defaultPeriod = Number.parseInt(key.slice('vwma_'.length), 10) || 20;
+        const period = (p.period as number) || (p.length as number) || defaultPeriod;
+        secPayload = { engineKey: 'vwma', data: calcVWMA(klines, period), label: `VWMA ${period}` };
+      } else if (key === 'vwap') {
+        secPayload = { engineKey: 'vwap', data: calcVWAP(klines) };
+      } else if (key === 'bb') {
+        secPayload = { engineKey: 'bb', data: calcBB(klines, (p.period as number) || 20, (p.mult as number) || 2) };
+      } else if (key === 'atr_bands') {
+        secPayload = { engineKey: 'atr_bands', data: calcATRBands(klines, (p.period as number) || 14, (p.mult as number) || 2) };
+      } else if (key === 'volume') {
+        secPayload = { engineKey: 'volume', bars: klines };
+      } else if (key === 'oi') {
+        const oiData = data.oiBars?.map((b) => ({ time: b.time, value: b.value })) ?? [];
+        secPayload = { engineKey: 'oi', data: oiData, tf };
+      } else if (key === 'cvd') {
+        let cvd = data.cvdBars?.map((b) => ({ time: b.time, value: b.value })) ?? [];
+        if (!cvd.length) {
+          let cum = 0;
+          cvd = klines.map((k) => { cum += (k.close >= k.open ? 1 : -1) * k.volume; return { time: k.time, value: cum }; });
+        }
+        secPayload = { engineKey: 'cvd', data: cvd, tf };
+      } else if (key === 'derivatives') {
+        const fundData = (data.fundingBars ?? []) as Array<{ time: number; value: number }>;
+        secPayload = { engineKey: 'derivatives', data: fundData.map((b) => ({ time: b.time, value: b.value })), tf };
+      }
+
+      if (secPayload) {
+        mountSecondaryIndicator(mainChart!, secPayload, targetPane, inst.instanceId, inst.style.color);
+        if (!overlay) {
+          secondaryPaneInfos.push({ instanceId: inst.instanceId, engineKey: key, paneIndex: nextExtraPane });
+          nextExtraPane++;
+        }
+      }
+    }
+    // Wire crosshair → live chip updates (rAF throttled)
+    crosshairUnsub?.();
+    crosshairUnsub = createCrosshairSync(
+      mainChart,
+      indicatorSeriesRefs,
+      panePositions,
+      (chips) => { crosshairChips = chips; },
+    );
+
+    subscribeMainTimeScale();
+
+    void tick().then(() => {
+      handleResize();
+      // W-0479 cycle deeplink: ts → 차트 시점 점프 (consume once).
+      let consumedTs: number | null = null;
+      const unsubTs = pendingChartTs.subscribe((v) => { consumedTs = v; });
+      unsubTs();
+      if (consumedTs != null && mainChart) {
+        focusChartAt(consumedTs);
+        pendingChartTs.set(null);
+      } else {
+        mainChart?.timeScale().scrollToRealTime();
+      }
+
+      trackChartFirstPaint({
+        symbol,
+        tf,
+        duration_ms: Math.round(performance.now() - _renderStart),
+        kline_count: klines.length,
+      });
+
+      // W-0289: init DrawingManager after chart is ready
+      // W-T7: use tabId-scoped key for per-tab isolation; fall back to legacy sym:tf key
+      if (mainChart && priceSeries) {
+        const legacyKey = `drawings:${symbol}:${tf}`;
+        const key = tabId ? `drawings:${tabId}:${symbol}:${tf}` : legacyKey;
+        if (!drawingMgr || drawingMgr.storageKey !== key) {
+          drawingMgr?.detach();
+          // migrate legacy drawings into per-tab key on first use
+          if (tabId && !localStorage.getItem(key) && localStorage.getItem(legacyKey)) {
+            localStorage.setItem(key, localStorage.getItem(legacyKey)!);
+          }
+          drawingMgr = new DrawingManager({ storageKey: key });
+        }
+        drawingMgr.onToolChange = (t) => { shellStore.setDrawingTool(t); };
+        drawingMgr.attach(mainChart, priceSeries as ISeriesApi<SeriesType>);
+      }
+    });
+  }
+
+  // ── Verdict / whale level lines — delegated to PriceLineManager ─────────
+  function updateLevels() {
+    priceLineMgr.setSeries(priceSeries as ISeriesApi<SeriesType> | null);
+    // verdict levels now rendered by AgentTradeOverlay SVG overlay
+  }
+
+  // W-0210 Layer 2: Whale liquidation price lines
+  function applyWhalePriceLines() {
+    priceLineMgr.setSeries(priceSeries as ISeriesApi<SeriesType> | null);
+    // Filter out 'unknown' netPosition — PriceLineManager only accepts 'long' | 'short'
+    const knownPositions = $whaleStore.positions.filter(
+      (p): p is typeof p & { netPosition: 'long' | 'short' } => p.netPosition !== 'unknown',
+    );
+    priceLineMgr.applyWhaleLines(knownPositions);
+  }
+
+  /** Nearest long/short liq + strongest cluster prices — adapted from ChartBoard liqData shape. */
+  function applyLiqPriceLines() {
+    priceLineMgr.setSeries(priceSeries as ISeriesApi<SeriesType> | null);
+    if (!liqData) {
+      priceLineMgr.clearLiqLines();
+      return;
+    }
+    // Adapt ChartBoard's liqData (clusters[] with usd/liquidatedSide) to LiqData shape
+    const clusters = [...(liqData.clusters ?? [])].sort((a, b) => b.usd - a.usd);
+    const used = new Set<number>();
+    for (const nl of [liqData.nearestLong, liqData.nearestShort]) {
+      if (nl?.price != null) used.add(Math.round(nl.price * 100));
+    }
+    const strongestClusters = clusters
+      .filter((c) => {
+        const key = Math.round(c.price * 100);
+        if (used.has(key)) return false;
+        used.add(key);
+        return true;
+      })
+      .slice(0, 4)
+      .map((c) => ({
+        price: c.price,
+        side: c.liquidatedSide as 'long' | 'short',
+        totalUsd: c.usd,
+      }));
+    priceLineMgr.applyLiqLines({
+      nearestLong: liqData.nearestLong ?? undefined,
+      nearestShort: liqData.nearestShort ?? undefined,
+      strongestClusters,
+    });
+  }
+
+  // ── Time scale sync ────────────────────────────────────────────────────────
+  // Native multi-pane (lightweight-charts v5.1+) shares one time axis across
+  // all panes automatically. We only need to subscribe once on mainChart for
+  // capture-window updates and lazy-load triggers.
+  function subscribeMainTimeScale() {
+    if (!mainChart) return;
+    mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+      if (!range) return;
+      refreshCaptureWindowSummary();
+      if (range.from < LAZY_TRIGGER_BARS) void feed.loadMoreHistory();
+      onTimeRangeChange?.(range);
+    });
+  }
+
+  // ── Liq pane helpers (native multi-pane: update kept series in place) ─────
+
+  type LiqBarRaw = { time: number; longUsd: number; shortUsd: number };
+
+  function _initLiqPane(liqBars: LiqBarRaw[]) {
+    if (indicatorSeriesRefs) refreshLiqPane(indicatorSeriesRefs, liqBars);
+  }
+
+  function _refreshLiqPane(liqBars: LiqBarRaw[]) {
+    _initLiqPane(liqBars);
+  }
+
+  function destroyCharts() {
+    if (_renderFrame !== null) {
+      cancelAnimationFrame(_renderFrame);
+      _renderFrame = null;
+    }
+    _renderScheduled = false;
+    _pendingRenderData = null;
+    _lastRenderSignature = '';
+    // Tear down crosshair sync before removing the chart
+    crosshairUnsub?.();
+    crosshairUnsub = null;
+    indicatorSeriesRefs = null;
+    crosshairChips = null;
+
+    priceLineMgr.clearAll();
+    clearAIOverlay();
+    priceLineMgr = new PriceLineManager();
+    _alphaOverlay?.destroy();
+    _alphaOverlay = null;
+    detachDragHandlers();
+    detachRangePrimitive();
+    mainChart?.remove();
+    mainChart = null;
+    priceSeries = null;
+    candleMarkerApi = null;
+    candleSeriesForAnnotations = null;
+    panePositions = { rsiOrMacd: -1, oi: -1, cvd: -1, funding: -1, liq: -1, obv: -1 };
+    priceStretch = 4;
+    activeResize = null;
+  }
+
+  function handleResize() {
+    if (!containerEl) return;
+    const w = Math.max(120, mainEl?.offsetWidth ?? containerEl.offsetWidth);
+    // With native multi-pane the chart owns the full stack height. We give
+    // it the full container minus a tiny safety margin.
+    const h = Math.max(240, mainEl?.clientHeight ?? containerEl.clientHeight - 8);
+    mainChart?.resize(w, h);
+    refreshCaptureWindowSummary();
+  }
+
+  /** Current visible range on main chart → OHLCV + indicators slice for pattern persistence */
+  function getViewportForSave(): ChartViewportSnapshot | null {
+    const data = chartData;
+    if (!data?.klines?.length || !mainChart) return null;
+    const vr = mainChart.timeScale().getVisibleRange();
+    let from: number;
+    let to: number;
+    if (vr) {
+      from = chartTimeToUnixSeconds(vr.from);
+      to = chartTimeToUnixSeconds(vr.to);
+      if (!Number.isFinite(from) || !Number.isFinite(to)) {
+        from = data.klines[0].time;
+        to = data.klines[data.klines.length - 1].time;
+      } else if (from > to) {
+        const s = from;
+        from = to;
+        to = s;
+      }
+    } else {
+      from = data.klines[0].time;
+      to = data.klines[data.klines.length - 1].time;
+    }
+    return slicePayloadToViewport(data, from, to, liveTick.time ?? undefined);
+  }
+
+  function handleSaveSetup() {
+    if ($chartSaveMode.active) {
+      chartSaveMode.exitRangeMode();
+    } else {
+      chartSaveMode.enterRangeMode();
+    }
+  }
+
+  function handleModalSaved(captureId: string) {
+    showSaveModal = false;
+    savedCaptureId = captureId;
+    onCaptureSaved?.(captureId);
+    onSaveSetup?.({ symbol, timestamp: liveTick.time ?? Math.floor(Date.now() / 1000), tf });
+    setTimeout(() => { savedCaptureId = null; }, 4000);
+  }
+
+  function handleResearchSaved(captureId: string) {
+    showResearchPanel = false;
+    researchViewport = null;
+    chartSaveMode.exitRangeMode();
+    savedCaptureId = captureId;
+    onCaptureSaved?.(captureId);
+    onSaveSetup?.({ symbol, timestamp: liveTick.time ?? Math.floor(Date.now() / 1000), tf });
+    setTimeout(() => { savedCaptureId = null; }, 4000);
+  }
+
+  function selectTf(t: string) {
+    internalTf = t;
+    onTfChange?.(t);
+  }
+
+  const STUDY_TO_INDICATOR: Record<StudyId, IndicatorKey> = {
+    ema: 'ema',
+    vwap: 'vwap',
+    bb: 'bb',
+    atr: 'atr_bands',
+    macd: 'macd',
+    cvd: 'cvd',
+    overlay: 'derivativesOverlay',
+    comparison: 'comparison',
+  };
+
+  function toggleStudy(id: StudyId) {
+    const key = STUDY_TO_INDICATOR[id];
+    if (!key) return;
+    if (paneId !== undefined && paneId >= 0) togglePaneIndicator(paneId, key);
+    else toggleChartIndicator(key);
+  }
+
+  /** Hide a sub-pane indicator — fires from pane × buttons (W-0102 Slice 3). */
+  function hidePane(key: IndicatorKey) {
+    if (paneId !== undefined && paneId >= 0) togglePaneIndicator(paneId, key);
+    else removeChartIndicator(key);
+  }
+
+  /** W-0399: Add indicator from IndicatorLibrary drawer. All Tier-A keys support multi-instance. */
+  function handleAddIndicator(indicator: IndicatorDef) {
+    if (indicator.tier === 'A' && indicator.engineKey) {
+      const key = indicator.engineKey as IndicatorKey;
+      if (key.startsWith('vwma_')) {
+        const MAX_INSTANCES = 5;
+        const count = indicatorInstances.countByDef(indicator.id);
+        if (count < MAX_INSTANCES) {
+          const period = Number.parseInt(key.slice('vwma_'.length), 10) || 20;
+          indicatorInstances.add(indicator.id, key, { period });
+          if (effectiveChartData) scheduleRender(effectiveChartData);
+        }
+        indicatorLibraryOpen = false;
+        return;
+      }
+      const alreadyActive = _ind[key];
+      const MAX_INSTANCES = 5;
+      if (alreadyActive) {
+        // Already active via toggle store — add a secondary instance instead of toggling off
+        const count = indicatorInstances.countByDef(indicator.id);
+        if (count < MAX_INSTANCES) {
+          indicatorInstances.add(indicator.id, key);
+          if (effectiveChartData) scheduleRender(effectiveChartData);
+        }
+        indicatorLibraryOpen = false;
+        return;
+      }
+      // First add: route to per-pane store when available
+      if (paneId !== undefined && paneId >= 0) togglePaneIndicator(paneId, key);
+      else toggleChartIndicator(key);
+    }
+    indicatorLibraryOpen = false;
+  }
+
+  /** W-0399: Remove a secondary indicator instance and re-render. */
+  function removeInstance(instanceId: string) {
+    indicatorInstances.remove(instanceId);
+    if (effectiveChartData) scheduleRender(effectiveChartData);
+  }
+
+  /** W-0399: Update params on a secondary indicator instance and re-render. */
+  function updateInstance(instanceId: string, params: Record<string, number | string | boolean>) {
+    indicatorInstances.updateParams(instanceId, params);
+    if (effectiveChartData) scheduleRender(effectiveChartData);
+  }
+
+  function onAIDraw(e: Event) {
+    const payload = (e as CustomEvent<{ shapes?: AIDrawShape[] }>).detail;
+    if (!drawingMgr || !payload?.shapes) return;
+    for (const shape of payload.shapes) {
+      drawingMgr.addFromAI(shape);
+    }
+  }
+
+  onMount(() => {
+    // W-0407: subscribe post-hydration so $state writes don't trigger Svelte 5 warning
+    _unsubPanes = activeTabState.subscribe(_syncPanesFromTab);
+
+    const onWin = () => {
+      viewportWidth = containerEl?.offsetWidth ?? window.innerWidth;
+      handleResize();
+    };
+    window.addEventListener('resize', onWin);
+    window.addEventListener('wtd:ai:draw', onAIDraw);
+    // Subscribe to save-mode store for range-mode click handling (W-0086)
+    saveModeUnsubscribe = chartSaveMode.subscribe(handleSaveModeChange);
+    // ESC exits range-mode without capturing pointer events
+    window.addEventListener('keydown', handleRangeModeKeydown);
+    // D key toggles drawing mode (W-0374)
+    window.addEventListener('keydown', handleDrawingModeKeydown);
+    // / key opens indicator library (W-0399)
+    window.addEventListener('keydown', handleIndicatorLibraryKeydown);
+    // DrawingRail clear/delete events (siblings in grid, can't share props)
+    window.addEventListener('wtd:drawing:clear-all', onDrawingClearAll);
+    window.addEventListener('wtd:drawing:delete-selected', onDrawingDeleteSelected);
+    // Chart snapshot + zoom controls
+    window.addEventListener('cogochi:cmd', onCmdSnapshot as EventListener);
+    window.addEventListener('cogochi:cmd', onCmdZoom as EventListener);
+    // Initial viewport width
+    onWin();
+    return () => {
+      window.removeEventListener('resize', onWin);
+      window.removeEventListener('wtd:ai:draw', onAIDraw);
+      window.removeEventListener('keydown', handleRangeModeKeydown);
+      window.removeEventListener('keydown', handleDrawingModeKeydown);
+      window.removeEventListener('keydown', handleIndicatorLibraryKeydown);
+      window.removeEventListener('wtd:drawing:clear-all', onDrawingClearAll);
+      window.removeEventListener('wtd:drawing:delete-selected', onDrawingDeleteSelected);
+      window.removeEventListener('cogochi:cmd', onCmdSnapshot as EventListener);
+      window.removeEventListener('cogochi:cmd', onCmdZoom as EventListener);
+    };
+  });
+  onDestroy(() => {
+    _unsubPanes?.();
+    saveModeUnsubscribe?.();
+    disconnectWS();
+    destroyCharts();
+  });
+
+  /** Main + sub-panes fill `chart-stack`; keep canvas size in sync when flex height changes. */
+  $effect(() => {
+    const el = chartStackEl;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      handleResize();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
+  // Remote data should only reload when the market context changes.
+  $effect(() => {
+    void symbol;
+    void tf;
+    void emaTf;
+    void initialData;
+    void showEMA;
+    void showBB;
+    void showVWAP;
+    void showVWMA;
+    void showATRBands;
+    void showRSI;
+    void showMACD;
+    void showOI;
+    void showFundingPane;
+    void showLiqPane;
+    void feed.loadData();
+  });
+
+  // WebSocket real-time candle feed — reconnects when symbol or tf changes.
+  $effect(() => {
+    const sym = symbol;
+    const timeframe = tf;
+    connectKlineWS(sym, timeframe);
+    return () => disconnectWS();
+  });
+
+  // Depth/liquidation data comes from the parent terminal page to avoid duplicate requests.
+  $effect(() => {
+    depthData = depthSnapshot;
+    liqData = liqSnapshot;
+  });
+
+  /** Re-stamp liq rails when snapshot arrives after candles render. */
+  $effect(() => {
+    void liqData;
+    if (!priceSeries || loading || !chartData) return;
+    void tick().then(() => {
+      applyLiqPriceLines();
+    });
+  });
+
+  // Indicator toggles should only re-render from cached data, not refetch it.
+  $effect(() => {
+    void showVWAP;
+    void showVWMA;
+    void showBB;
+    void showEMA;
+    void showATRBands;
+    void showCVD;
+    void showMACD;
+    void showRSI;
+    void showOI;
+    void showFundingPane;
+    void showLiqPane;
+    void showVolume;
+    void showOBV;
+    void chartMode;
+    void priceScaleMode;
+    void cvdDivergence;
+    void derivativesOnMain;
+    void showComparison;
+    void showHeatmap;
+    void $comparisonStore.data;  // re-render when comparison data arrives
+    void aggOiBars;
+    void aggFundingBars;
+    void indicatorInstances.instances.length;
+    const data = effectiveChartData;
+    if (!data || loading) return;
+    void tick().then(() => {
+      scheduleRender(data);
+    });
+  });
+
+  // Update price lines when verdict changes (no reload)
+  $effect(() => {
+    void verdictLevels;
+    updateLevels();
+  });
+
+  // W-T4: sync alert price lines when tabAlerts changes
+  $effect(() => {
+    void tabAlerts;
+    if (priceSeries && !loading) {
+      priceLineMgr.setSeries(priceSeries as ISeriesApi<SeriesType> | null);
+      priceLineMgr.updateAlertLines(tabAlerts);
+    }
+  });
+
+  // W-0210 Layer 1: Re-apply alpha overlay when analysisData changes (no chart rebuild)
+  $effect(() => {
+    void analysisData;
+    if (priceSeries && !loading) {
+      syncAlphaOverlay();
+    }
+  });
+
+  // W-0456: SMC overlay — fetch and render FVG/OB boxes when symbol or tf changes
+  $effect(() => {
+    const sym = symbol;
+    const timeframe = tf;
+    if (!priceSeries || loading) return;
+    fetchSmcEvents(sym, timeframe).then((events) => {
+      if (!events.length) {
+        detachSmcPrimitive();
+        return;
+      }
+      attachSmcPrimitive();
+      smcPrimitive?.setEvents(events);
+    }).catch(() => { /* silent — SMC data is supplementary */ });
+    return () => { detachSmcPrimitive(); };
+  });
+
+  // W-0459: Liq-zones overlay — fetch horizontal liquidation bands when symbol changes
+  $effect(() => {
+    const sym = symbol;
+    if (!priceSeries || loading) return;
+    fetchLiqZones(sym, 30)
+      .then((rows) => {
+        if (!rows.length) {
+          detachLiqPrimitive();
+          return;
+        }
+        attachLiqPrimitive();
+        liqPrimitive?.setZones(rows);
+      })
+      .catch(() => { /* silent — liq data is supplementary */ });
+    return () => { detachLiqPrimitive(); };
+  });
+
+  // W-0210 Layer 2: Apply whale liq price lines when data changes
+  $effect(() => {
+    void $whaleStore.positions;
+    if (priceSeries && !loading) {
+      applyWhalePriceLines();
+    }
+  });
+
+  // W-0357: Apply AI analysis price lines (entry/stop) from AIPanel ANALYZE results.
+  // Lines are cleared automatically when the symbol changes.
+  $effect(() => {
+    const state = $chartAIOverlay;
+    if (!priceSeries) return;
+    if (state.symbol === symbol && state.lines.length > 0) {
+      priceLineMgr.setSeries(priceSeries as ISeriesApi<SeriesType> | null);
+      priceLineMgr.setAILines(state.lines);
+    } else {
+      priceLineMgr.clearAILines();
+    }
+  });
+
+  // W-0357: Clear AI overlay when symbol changes so stale lines don't persist.
+  $effect(() => {
+    void symbol;
+    clearAIOverlay();
+  });
+
+  // D-9: AI overlay shapes
+  interface AIBoxCoord { x: number; y: number; w: number; h: number; color: string; label?: string }
+  let aiBoxCoords = $state<AIBoxCoord[]>([]);
+  function recomputeAIShapes() {
+    if (!mainChart || !priceSeries) { aiBoxCoords = []; return; }
+    const ov = $chartAIOverlay;
+    if (ov.symbol !== symbol) { aiBoxCoords = []; return; }
+    const ts = mainChart.timeScale();
+    aiBoxCoords = (ov.shapes.filter((s): s is AIRangeBox => s.kind === 'range')).flatMap(b => {
+      const x1 = ts.timeToCoordinate(b.fromTime as UTCTimestamp), x2 = ts.timeToCoordinate(b.toTime as UTCTimestamp);
+      const y1 = priceSeries!.priceToCoordinate(b.fromPrice), y2 = priceSeries!.priceToCoordinate(b.toPrice);
+      if (x1 == null || x2 == null || y1 == null || y2 == null) return [];
+      return [{ x: Math.min(x1,x2), y: Math.min(y1,y2), w: Math.abs(x2-x1), h: Math.abs(y2-y1), color: b.color, label: b.label }];
+    });
+    if (candleMarkerApi && ov.symbol === symbol) {
+      const ann = ov.shapes.filter((s): s is AIAnnotation => s.kind === 'annotation')
+        .map(s => ({ time: s.time as UTCTimestamp, position: 'aboveBar' as const, color: s.color, shape: 'circle' as const, text: s.text }));
+      if (ann.length) candleMarkerApi.setMarkers([...ann]);
+    }
+  }
+  $effect(() => {
+    if (!mainChart) return;
+    mainChart.timeScale().subscribeVisibleLogicalRangeChange(recomputeAIShapes);
+    return () => mainChart?.timeScale().unsubscribeVisibleLogicalRangeChange(recomputeAIShapes);
+  });
+  $effect(() => { void $chartAIOverlay; recomputeAIShapes(); });
+
+  // W-0210 Layer 3: Fetch comparison data when comparison is toggled or TF changes
+  const COMPARISON_SYMBOL = 'BTCUSDT';
+  $effect(() => {
+    void showComparison;
+    void tf;
+    if (showComparison && symbol !== COMPARISON_SYMBOL) {
+      comparisonStore.setSymbol(COMPARISON_SYMBOL, tf);
+    }
+  });
+
+</script>
+
+<div
+  class="chart-board"
+  bind:this={containerEl}
+  data-context={contextMode}
+  data-deriv-overlay={derivativesOnMain ? '1' : '0'}
+  data-surface={surfaceStyle}
+>
+
+  <!-- ── Chart area ────────────────────────────────────────────────────────── -->
+  {#if loading}
+    <div class="chart-state">
+      <span class="pulse"></span>
+      <span class="state-text">Loading {symbol} {tf}…</span>
+    </div>
+  {:else if rateLimitRetryIn !== null}
+    <div class="chart-state rate-limit">
+      <span class="pulse rate-limit-pulse"></span>
+      <span class="state-text">Throttled — retrying in {rateLimitRetryIn}s</span>
+    </div>
+  {:else if fatalChartError}
+    <div class="chart-state error">
+      <span>! {error}</span>
+      <button onclick={() => void feed.loadData()}>Retry</button>
+    </div>
+  {:else}
+    <!-- W-0374 Phase D-4: IndicatorLibrary drawer -->
+    {#if indicatorLibraryOpen}
+      <IndicatorLibrary
+        onAddIndicator={handleAddIndicator}
+        onRemoveInstance={removeInstance}
+        onUpdateInstance={updateInstance}
+      />
+    {/if}
+
+    <div class="chart-stack" class:range-mode={$chartSaveMode.active} class:drawer-open={selectedCapture !== null} class:drawing-active={drawingActiveTool !== 'cursor'} bind:this={chartStackEl}>
+    {#if passiveChartError}
+      <div class="chart-inline-status chart-inline-status--warn">
+        <span>{error}</span>
+        <button onclick={() => void feed.loadData()}>Retry</button>
+      </div>
+    {/if}
+    <!-- Layer 2 overlay container — pointer-events: none; only chips/buttons inside use auto (W-0086) -->
+    <div class="chart-layer2-overlay">
+      <!-- W-T3: moved to DrawingOverlay -->
+      <div class="layer2-topright">
+        {#if showEMA && emaTfQuickOptions.length > 0}
+          <div class="ema-tf-strip" role="group" aria-label="MTF EMA timeframe">
+            <span class="ema-tf-label">HTF</span>
+            {#each emaTfQuickOptions as t}
+              <button
+                class="ema-tf-chip"
+                class:active={emaTf === t}
+                onclick={() => { emaTf = emaTf === t ? '' : t; }}
+              >{t}</button>
+            {/each}
+          </div>
+        {/if}
+        <PhaseBadge phase={null} />
+      </div>
+    </div>
+    <!-- W-T11: Volume profile right-side overlay -->
+    {#if showVolumeProfile && volumeProfileRows.length > 0}
+      <div class="volume-profile-overlay">
+        {#each volumeProfileRows as row}
+          <div class="vp-row" style="opacity: {row.opacity}" class:vp-poc={row.isPoc}>
+            <div class="vp-bid" style="width: {row.bidWidth}; background: rgba(38,166,154,0.55)"></div>
+            <div class="vp-ask" style="width: {row.askWidth}; background: rgba(239,83,80,0.55)"></div>
+          </div>
+        {/each}
+      </div>
+    {/if}
+    <!-- W-0358: Floating note button (bottom-right of chart) -->
+    <FloatingNoteButton
+      {symbol}
+      timeframe={tf}
+      getCapturePrice={() => liveTick.price ?? 0}
+      getLastClosedBarTime={getLastClosedBarTime}
+    />
+    <!--
+      Native multi-pane: a single lightweight-charts instance owns the price
+      pane plus N indicator panes (CVD / OI / Funding / Liq / RSI or MACD).
+      All panes share crosshair + time axis natively (v5.1 pane API).
+    -->
+    <div class="pane-main multi-pane-host" bind:this={mainEl}
+      style="--price-frac: {priceFracPct}%">
+      <!-- W-0289: Drawing overlay canvas -->
+      {#if drawingMgr}
+        <DrawingOverlay
+          mgr={drawingMgr}
+          chart={mainChart}
+          series={priceSeries as ISeriesApi<SeriesType> | null}
+          containerEl={mainEl}
+          {symbol}
+        />
+      {/if}
+
+      <!-- W-T5A: Agent trade zone overlay (entry/stop/target bands) -->
+      <AgentTradeOverlay
+        zone={verdictLevels}
+        chart={mainChart}
+        series={priceSeries as ISeriesApi<SeriesType> | null}
+        containerEl={mainEl}
+      />
+
+      <!-- W-0395 Phase 4: pane resize handles — 6px grab zone at each pane boundary -->
+      {#each resizeBoundaries as boundary}
+        <div
+          class="pane-resizer"
+          class:is-resizing={activeResize?.upperKind === boundary.upperKind}
+          style="top: {boundary.top.toFixed(2)}%"
+          role="presentation"
+          aria-hidden="true"
+          onmousedown={(e) => startPaneResize(e, boundary.upperKind)}
+        ></div>
+      {/each}
+
+      <!--
+        Per-pane info bars — TV × Santiment style chips. Positioned via
+        inline `top` derived from actual stretch ratios so they stay
+        aligned after user resize (pibTops always matches setStretchFactor).
+      -->
+      {#if chartData}
+        {#if rsiOrMacdChips && panePositions.rsiOrMacd >= 0}
+          <div class="pib-anchor" style="top: {(pibTops.rsiOrMacd ?? 0).toFixed(2)}%">
+            <PaneInfoBar
+              title={showMACD ? 'MACD' : 'RSI'}
+              sublabel={tf}
+              chips={crosshairChips?.rsiOrMacd ?? rsiOrMacdChips}
+              closable
+              onClose={() => removeChartIndicator(showMACD ? 'macd' : 'rsi')}
+            />
+          </div>
+        {/if}
+        {#if oiChips && panePositions.oi >= 0}
+          <div class="pib-anchor" style="top: {(pibTops.oi ?? 0).toFixed(2)}%">
+            <PaneInfoBar
+              title="OI Δ"
+              sublabel={tf}
+              chips={crosshairChips?.oi ?? oiChips.chips}
+              closable
+              onClose={() => removeChartIndicator('oi')}
+            />
+          </div>
+        {/if}
+        {#if cvdChips && panePositions.cvd >= 0}
+          <div class="pib-anchor" style="top: {(pibTops.cvd ?? 0).toFixed(2)}%">
+            <PaneInfoBar
+              title="CVD"
+              sublabel={tf}
+              chips={crosshairChips?.cvd ?? cvdChips.chips}
+              closable
+              onClose={() => removeChartIndicator('cvd')}
+            >
+              {#snippet children()}
+                <div class="pib-inline-actions" aria-label="CVD visual mode">
+                  <button
+                    type="button"
+                    class="pib-mini-btn"
+                    class:is-active={cvdVisualMode === 'blend'}
+                    onclick={() => { cvdVisualMode = 'blend'; if (effectiveChartData) scheduleRender(effectiveChartData); }}
+                  >blend</button>
+                  <button
+                    type="button"
+                    class="pib-mini-btn"
+                    class:is-active={cvdVisualMode === 'abs'}
+                    onclick={() => { cvdVisualMode = 'abs'; if (effectiveChartData) scheduleRender(effectiveChartData); }}
+                  >abs</button>
+                  <button
+                    type="button"
+                    class="pib-mini-btn"
+                    class:is-active={cvdVisualMode === 'norm'}
+                    onclick={() => { cvdVisualMode = 'norm'; if (effectiveChartData) scheduleRender(effectiveChartData); }}
+                  >norm</button>
+                </div>
+              {/snippet}
+            </PaneInfoBar>
+          </div>
+        {/if}
+        {#if fundingChips && panePositions.funding >= 0}
+          <div class="pib-anchor" style="top: {(pibTops.funding ?? 0).toFixed(2)}%">
+            <PaneInfoBar
+              title="Funding"
+              sublabel={tf}
+              chips={crosshairChips?.funding ?? fundingChips.chips}
+              closable
+              onClose={() => removeChartIndicator('funding')}
+            />
+          </div>
+        {/if}
+        {#if liqChips && panePositions.liq >= 0}
+          <div class="pib-anchor" style="top: {(pibTops.liq ?? 0).toFixed(2)}%">
+            <PaneInfoBar
+              title="Liquidations"
+              sublabel={tf}
+              chips={crosshairChips?.liq ?? liqChips.chips}
+              closable
+              onClose={() => removeChartIndicator('liq')}
+            />
+          </div>
+        {/if}
+        {#if obvChips && panePositions.obv >= 0}
+          <div class="pib-anchor" style="top: {(pibTops.obv ?? 0).toFixed(2)}%">
+            <PaneInfoBar
+              title="OBV"
+              sublabel={tf}
+              chips={crosshairChips?.obv ?? obvChips.chips}
+              closable
+              onClose={() => removeChartIndicator('obv')}
+            />
+          </div>
+        {/if}
+        <!-- Secondary indicator instances (W-0399-P2) -->
+        {#each indicatorInstances.instances.filter(i => i.style.visible && SUB_PANE_KINDS.has(i.engineKey)) as inst (inst.instanceId)}
+          {@const top = instancePibTops.get(inst.instanceId) ?? 0}
+          {@const suffix = instanceLabelSuffix.get(inst.instanceId) ?? ''}
+          {@const label = inst.engineKey.toUpperCase() + (inst.params.period ? ` ${inst.params.period}` : inst.params.fast ? ` ${inst.params.fast}/${inst.params.slow}` : '') + suffix}
+          <div class="pib-anchor" style="top: {top.toFixed(2)}%">
+            <PaneInfoBar
+              title={label}
+              sublabel={tf}
+              chips={[]}
+              closable
+              onClose={() => { indicatorInstances.remove(inst.instanceId); if (effectiveChartData) scheduleRender(effectiveChartData); }}
+            />
+          </div>
+        {/each}
+      {/if}
+    </div>
+    </div>
+    <SaveStrip
+      {symbol}
+      {tf}
+      ohlcvBars={chartData?.klines ?? []}
+      onSaved={(id) => { onCaptureSaved?.(id); }}
+      onAnalyze={() => {
+        if (researchViewport) {
+          rangeContext.set({ symbol, tf, viewport: researchViewport, triggeredAt: Date.now() });
+        } else {
+          showResearchPanel = true;
+        }
+      }}
+    />
+    {#if contextMode === 'full'}
+    <KpiStrip bundle={kpiBundle} />
+    <details class="tv-context-strip" bind:open={contextStripOpen}>
+      <summary class="tv-context-summary">
+        <div class="tv-context-inline">
+          {#each contextSummaryItems as item}
+            <span class="tv-context-pill" data-tone={item.tone ?? 'neutral'}>
+              <em>{item.label}</em>
+              <strong>{item.value}</strong>
+            </span>
+          {/each}
+        </div>
+        <span class="tv-context-toggle">{contextStripOpen ? 'Hide depth' : 'Depth / liq'}</span>
+      </summary>
+      <div class="tv-context-body">
+    <div class="micro-bars" aria-label="Order book and liquidation snapshot">
+      <div class="depth-strip">
+        <div class="strip-head">
+          <span>Book imbalance</span>
+          <small>
+            Spread {depthData?.spreadBps != null ? `${depthData.spreadBps.toFixed(1)} bps` : 'est.'}
+            {' · '}
+            Mid {liveTick.price ? liveTick.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '-'}
+          </small>
+        </div>
+        <div class="depth-bar">
+          <div class="depth-bid" style={`width:${bidPct}%`}>
+            <span>BID {bidPct}%</span>
+          </div>
+          <div class="depth-ask" style={`width:${askPct}%`}>
+            <span>ASK {askPct}%</span>
+          </div>
+        </div>
+      </div>
+      <div class="liq-strip">
+        <div class="strip-head">
+          <span>Liq clusters</span>
+          <small>{liqLong ? liqLong.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '-'} — {liqShort ? liqShort.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '-'}</small>
+        </div>
+        <div class="liq-track">
+          {#if liqData?.clusters?.length}
+            {#each liqData.clusters.slice(0, 3) as cluster, index}
+              <span
+                class={`liq-zone ${cluster.liquidatedSide === 'long' ? 'long' : 'short'} ${index === 1 ? 'warn' : ''}`}
+                style={`left:${12 + index * 24}%;width:${Math.max(12, Math.min(22, cluster.usd / 25000))}%`}
+              ></span>
+            {/each}
+          {:else}
+            <span class="liq-zone long" style="left:12%;width:14%"></span>
+            <span class="liq-zone warn" style="left:37%;width:18%"></span>
+            <span class="liq-zone short" style="left:68%;width:16%"></span>
+          {/if}
+          <span class="liq-now" style="left:52%"></span>
+        </div>
+        <div class="liq-labels">
+          <small class="liq-l">Long liq {liqData?.nearestLong?.usd != null ? `${(liqData.nearestLong.usd / 1000).toFixed(1)}k @ ` : ''}{liqLong ? liqLong.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '-'}</small>
+          <small class="liq-c">Now {liveTick.price ? liveTick.price.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '-'}</small>
+          <small class="liq-s">Short liq {liqData?.nearestShort?.usd != null ? `${(liqData.nearestShort.usd / 1000).toFixed(1)}k @ ` : ''}{liqShort ? liqShort.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '-'}</small>
+        </div>
+      </div>
+    </div>
+      </div>
+    </details>
+    {/if}
+  {/if}
+
+</div>
+
+<!-- Research Panel (W-0200): range select → auto-analyze → find similar → save -->
+<ResearchPanel
+  {symbol}
+  {tf}
+  open={showResearchPanel}
+  viewport={researchViewport}
+  onClose={() => {
+    showResearchPanel = false;
+    researchViewport = null;
+    chartSaveMode.exitRangeMode();
+  }}
+  onSaved={handleResearchSaved}
+/>
+
+<!-- Save Setup Modal (mobile / legacy path) -->
+<SaveSetupModal
+  symbol={symbol}
+  timestamp={liveTick.time ?? Math.floor(Date.now() / 1000)}
+  tf={tf}
+  open={showSaveModal && !showResearchPanel}
+  getViewportCapture={getViewportForSave}
+  onClose={() => {
+    showSaveModal = false;
+  }}
+  onSaved={handleModalSaved}
+/>
+
+<IndicatorCatalogModal
+  open={catalogModalOpen}
+  onClose={() => { catalogModalOpen = false; }}
+/>
+
+<!-- Layer 3: Capture annotation overlay (W-0120) -->
+<CaptureAnnotationLayer
+  series={candleSeriesForAnnotations}
+  {symbol}
+  timeframe={tf}
+  onAnnotationsChange={(anns) => { _annotationsCache = anns; }}
+/>
+{#if !onCaptureSelect}
+  <CaptureReviewDrawer
+    annotation={selectedCapture}
+    onClose={() => { selectedCapture = null; }}
+    onVerdict={(id, verdict) => { selectedCapture = null; }}
+  />
+{/if}
+
+<!-- Toast: saved confirmation -->
+{#if savedCaptureId}
+  <div class="save-toast">
+    ✓ Capture saved — <a href={`/lab?captureId=${encodeURIComponent(savedCaptureId)}&autorun=1`} class="toast-link">Find this →</a>
+  </div>
+{/if}
+
+<style>
+  .chart-layer2-overlay { position: absolute; top: 0; left: 0; right: 0; z-index: 15; pointer-events: none; }
+  .ai-range-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  .layer2-topright {
+    position: absolute;
+    top: 8px;
+    left: 10px;
+    right: 10px;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+    pointer-events: none;
+  }
+
+  .chart-board {
+    display: flex;
+    flex-direction: column;
+    background: #131722;
+    border: 1px solid rgba(19, 23, 34, 0.98);
+    border-radius: 2px;
+    overflow: hidden;
+    min-height: 300px;
+    height: 100%;
+    position: relative;
+  }
+
+  @media (max-width: 768px) {
+    .layer2-topright {
+      top: 6px;
+      left: 8px;
+      right: 8px;
+      gap: 8px;
+    }
+    .chart-board { min-height: 0; border-radius: 0; border: none; }
+  }
+
+  /* ── TF scroll (ChartToolbar) ── */
+  .tf-scroll {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 2px;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--sc-line-3) transparent;
+  }
+  .tf-scroll::-webkit-scrollbar {
+    height: 4px;
+  }
+  .tf-scroll::-webkit-scrollbar-thumb {
+    background: var(--sc-line-3);
+    border-radius: 2px;
+  }
+  .tv-context-strip {
+    border-top: 1px solid rgba(42, 46, 57, 0.85);
+    background: rgba(7, 11, 18, 0.92);
+    flex-shrink: 0;
+  }
+  .tv-context-summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    user-select: none;
+  }
+  .tv-context-summary::-webkit-details-marker {
+    display: none;
+  }
+  .tv-context-summary::before {
+    content: none;
+  }
+  .tv-context-inline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tv-context-inline::-webkit-scrollbar {
+    display: none;
+  }
+  .tv-context-pill {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 1px 0;
+    font-family: var(--sc-font-mono, monospace);
+    border-bottom: 1px solid transparent;
+  }
+  .tv-context-pill em {
+    font-style: normal;
+    font-size: var(--ui-text-xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(177, 181, 189, 0.46);
+  }
+  .tv-context-pill strong {
+    font-size: var(--ui-text-xs);
+    font-weight: 600;
+    color: rgba(239, 242, 247, 0.88);
+  }
+  .tv-context-pill[data-tone='bull'] strong {
+    color: #8fdd9d;
+  }
+  .tv-context-pill[data-tone='bear'] strong {
+    color: #f19999;
+  }
+  .tv-context-pill[data-tone='warn'] strong {
+    color: #e9c167;
+  }
+  .tv-context-toggle {
+    flex-shrink: 0;
+    font-family: var(--sc-font-mono, monospace);
+    font-size: var(--ui-text-xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(177, 181, 189, 0.52);
+  }
+  .tv-context-body {
+    padding: 0 8px 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* ── States ── */
+  .chart-state {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: rgba(255,255,255,0.3);
+    font-family: var(--sc-font-mono, monospace);
+    font-size: 11px;
+    min-height: 400px;
+  }
+  .chart-state.error { flex-direction: column; gap: 8px; }
+  .chart-state.rate-limit { color: rgba(251,191,36,0.55); }
+  .rate-limit-pulse { background: rgba(251,191,36,0.5) !important; }
+  .chart-state button {
+    padding: 3px 8px;
+    background: transparent;
+    border: 1px solid var(--sc-line-3);
+    color: rgba(255,255,255,0.4);
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: var(--ui-text-xs);
+  }
+  .pulse {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: rgba(255,255,255,0.3);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:.25} 50%{opacity:1} }
+  .state-text { font-size: var(--ui-text-xs); }
+
+  .chart-inline-status {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 7;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(420px, calc(100% - 20px));
+    padding: 7px 10px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 196, 81, 0.22);
+    background: rgba(12, 16, 24, 0.78);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+    pointer-events: auto;
+  }
+  .chart-inline-status--warn span {
+    min-width: 0;
+    color: rgba(248, 239, 226, 0.84);
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .chart-inline-status button {
+    flex: 0 0 auto;
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 196, 81, 0.18);
+    background: rgba(255, 196, 81, 0.1);
+    color: rgba(255, 212, 120, 0.96);
+    font-family: var(--sc-font-mono, monospace);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  /* ── Panes (main chart flexes; sub-panes fixed — matches lightweight-charts) ── */
+  .chart-stack {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    /* Layer 2 overlay anchors to this container */
+    position: relative;
+  }
+  /* Shift chart right when capture review drawer is open (desktop only) */
+  @media (min-width: 768px) {
+    .chart-stack.drawer-open {
+      padding-right: 304px;
+      transition: padding-right 240ms ease-out;
+    }
+  }
+  .chart-stack.range-mode,
+  .chart-stack.range-mode * {
+    cursor: crosshair !important;
+  }
+  .chart-stack.drawing-active .pane-main,
+  .chart-stack.drawing-active .pane-main * {
+    cursor: crosshair !important;
+  }
+  .pane-main {
+    flex: 1 1 58%;
+    min-height: 260px;
+    height: auto;
+    position: relative; /* host for PaneInfoBar overlays */
+  }
+  .pane-main.multi-pane-host {
+    flex: 1 1 100%;
+    min-height: 480px;
+  }
+  /* PaneInfoBar: top is set via inline style from pibTops (stretch-aware). */
+  .pib-anchor {
+    position: absolute;
+    left: 0;
+    right: 0;
+    pointer-events: none;
+    top: var(--price-frac, 50%); /* fallback only — overridden by inline style */
+  }
+  /* W-0395 Phase 4: pane resize handles */
+  .pane-resizer {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 6px;
+    transform: translateY(-3px);
+    cursor: row-resize;
+    z-index: 6;
+    background: transparent;
+  }
+  .pane-resizer::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 1px;
+    transform: translateY(-50%);
+    background: var(--sc-line-2);
+    transition: background 0.12s;
+  }
+  .pane-resizer:hover::after,
+  .pane-resizer.is-resizing::after {
+    background: rgba(99,179,237,0.55);
+    height: 2px;
+  }
+  .chart-board[data-deriv-overlay='1'] .pane-main {
+    min-height: 300px;
+  }
+  .chart-board[data-context='chart'] .pane-main {
+    min-height: min(48vh, 560px);
+  }
+  .pane-vol  { flex-shrink: 0; height: 60px; min-height: 60px; }
+  .pane-sub  { flex-shrink: 0; height: 80px; min-height: 80px; }
+  .pane-funding { flex-shrink: 0; height: 92px; min-height: 92px; }
+  .pane-oi   { flex-shrink: 0; height: 72px; min-height: 72px; }
+  .pane-cvd  { flex-shrink: 0; height: 84px; min-height: 84px; }
+  .chart-board[data-surface='velo'] .pane-main {
+    flex-basis: 54%;
+    min-height: min(42vh, 520px);
+  }
+  .chart-board[data-surface='velo'] .pane-vol {
+    height: 52px;
+    min-height: 52px;
+  }
+  .chart-board[data-surface='velo'] .pane-funding {
+    height: 92px;
+    min-height: 92px;
+  }
+  .chart-board[data-surface='velo'] .pane-liq {
+    height: 104px;
+    min-height: 104px;
+  }
+  .chart-board[data-surface='velo'] .pane-oi {
+    height: 118px;
+    min-height: 118px;
+  }
+  .chart-board[data-surface='velo'] :global(.indicator-pane-stack) {
+    gap: 0;
+    background: #0f131d;
+    border-top-color: rgba(255,255,255,0.09);
+  }
+  .velo-chart-caption {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    z-index: 8;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: rgba(19,23,34,0.42);
+    backdrop-filter: blur(2px);
+    pointer-events: none;
+    font-family: var(--sc-font-mono, monospace);
+    font-size: 11px;
+    line-height: 1.2;
+    color: rgba(239,242,247,0.86);
+  }
+  .volume-profile-overlay {
+    position: absolute;
+    top: 9%;
+    right: 0;
+    bottom: 8%;
+    z-index: 7;
+    width: min(28%, 320px);
+    display: grid;
+    grid-template-rows: repeat(22, minmax(0, 1fr));
+    gap: 1px;
+    padding-right: 4px;
+    pointer-events: none;
+    mix-blend-mode: screen;
+  }
+  .vp-row {
+    min-height: 3px;
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0;
+  }
+  .vp-bid,
+  .vp-ask {
+    height: 100%;
+    max-height: 16px;
+  }
+  .vp-bid {
+    background: linear-gradient(90deg, rgba(232,184,106,0.12), rgba(232,184,106,0.72));
+  }
+  .vp-ask {
+    background: linear-gradient(90deg, rgba(80,178,232,0.72), rgba(80,178,232,0.20));
+  }
+  .vp-poc .vp-bid,
+  .vp-poc .vp-ask { outline: 1px solid rgba(255,255,255,0.25); }
+
+  /* W-T4: alert row */
+  .alert-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    flex-shrink: 0;
+    min-height: 24px;
+    border-bottom: 1px solid rgba(42, 46, 57, 0.6);
+    background: rgba(11, 13, 18, 0.7);
+    flex-wrap: wrap;
+  }
+  .alert-input {
+    height: 18px;
+    width: 90px;
+    background: var(--sc-line-1);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 3px;
+    color: rgba(255,255,255,0.7);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--ui-text-xs);
+    padding: 0 5px;
+    outline: none;
+  }
+  .alert-input:focus { border-color: rgba(251,191,36,0.6); }
+  .alert-chip {
+    height: 18px;
+    padding: 0 6px;
+    background: rgba(251,191,36,0.1);
+    border: 1px solid rgba(251,191,36,0.35);
+    border-radius: 3px;
+    color: rgba(251,191,36,0.9);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--ui-text-xs);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .alert-chip:hover { background: rgba(251,191,36,0.2); }
+
+  /* ── MTF EMA TF selector ── */
+  .ema-tf-strip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    pointer-events: auto;
+    flex-wrap: nowrap;
+    max-width: min(100%, 240px);
+    padding: 4px 6px;
+    border-radius: 8px;
+    background: rgba(9, 13, 20, 0.76);
+    border: 1px solid rgba(64,196,255,0.14);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+    backdrop-filter: blur(8px);
+  }
+  .ema-tf-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--ui-text-xs);
+    color: rgba(64,196,255,0.5);
+    letter-spacing: 0.06em;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+  .ema-tf-chip {
+    height: 22px;
+    min-width: 34px;
+    padding: 0 8px;
+    background: rgba(64,196,255,0.08);
+    border: 1px solid rgba(64,196,255,0.18);
+    border-radius: 6px;
+    color: rgba(64,196,255,0.55);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: var(--ui-text-xs);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.1s;
+    white-space: nowrap;
+  }
+  .ema-tf-chip:hover { background: rgba(64,196,255,0.15); color: rgba(64,196,255,0.9); }
+  .ema-tf-chip.active {
+    background: rgba(64,196,255,0.2);
+    border-color: rgba(64,196,255,0.7);
+    color: rgba(64,196,255,1);
+  }
+
+  .save-toast {
+    position: fixed;
+    bottom: calc(var(--sc-consent-reserved-h, 0px) + 20px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #0f0f0f;
+    border: 1px solid rgba(38,166,154,0.5);
+    color: #26a69a;
+    font-family: var(--sc-font-mono, monospace);
+    font-size: 11px;
+    padding: 8px 16px;
+    border-radius: 6px;
+    z-index: 2000;
+    white-space: nowrap;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+    animation: toast-in 0.2s ease;
+  }
+
+  .toast-link { color: #63b3ed; text-decoration: underline; }
+  @keyframes toast-in { from { opacity: 0; transform: translateX(-50%) translateY(8px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+
+  /* Bloomberg-style pane header — 10px mono, tight 4/8px rhythm. */
+  .pane-label {
+    flex-shrink: 0;
+    padding: 2px 8px;
+    font-family: var(--sc-font-mono, monospace);
+    font-size: var(--ui-text-xs);
+    color: rgba(177, 181, 189, 0.58);
+    background: rgba(19, 23, 34, 0.66);
+    border-top: 1px solid rgba(42, 46, 57, 0.55);
+    letter-spacing: 0.06em;
+    line-height: 1.4;
+  }
+  .pane-label-split {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+  .pane-hint {
+    font-size: var(--ui-text-xs);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: rgba(255, 255, 255, 0.38);
+  }
+  .pane-hint-gold {
+    color: rgba(251, 191, 36, 0.72);
+  }
+  .pane-close {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: rgba(177, 181, 189, 0.42);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 2px;
+    font-family: inherit;
+    transition: color 80ms ease, background 80ms ease;
+  }
+  .pane-close:hover {
+    color: rgba(239, 68, 68, 0.86);
+    background: rgba(239, 68, 68, 0.08);
+  }
+  .pane-close:focus-visible {
+    outline: 1px solid rgba(94, 234, 212, 0.5);
+    outline-offset: 1px;
+  }
+
+  .pane-hint-mint {
+    color: rgba(94, 234, 212, 0.72);
+  }
+
+  .micro-bars {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 2px 4px 4px;
+    border-bottom: 1px solid var(--sc-line-1);
+    background: transparent;
+  }
+  .depth-strip,
+  .liq-strip {
+    display: grid;
+    gap: 3px;
+    padding: 3px 4px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+  }
+  .strip-head {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+    min-width: 0;
+  }
+  .strip-head span,
+  .strip-head small,
+  .depth-bid span,
+  .depth-ask span,
+  .liq-labels small {
+    font-family: var(--sc-font-mono, monospace);
+    font-size: var(--ui-text-xs);
+  }
+  .strip-head span {
+    color: rgba(247,242,234,0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .strip-head small {
+    color: rgba(247,242,234,0.3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .depth-bar {
+    display: flex;
+    height: 12px;
+    border-radius: 2px;
+    overflow: hidden;
+    background: var(--sc-line-1);
+  }
+  .depth-bid,
+  .depth-ask {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .depth-bid {
+    justify-content: flex-start;
+    background: linear-gradient(90deg, rgba(52,196,112,0.35), rgba(52,196,112,0.7));
+  }
+  .depth-ask {
+    justify-content: flex-end;
+    background: linear-gradient(90deg, rgba(232,85,85,0.72), rgba(232,85,85,0.35));
+  }
+  .depth-bid span,
+  .depth-ask span {
+    color: rgba(255,255,255,0.74);
+    padding: 0 5px;
+    white-space: nowrap;
+  }
+  .liq-track {
+    position: relative;
+    height: 10px;
+    border-radius: 2px;
+    background: var(--sc-line-1);
+    overflow: hidden;
+  }
+  .liq-zone {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    border-radius: 1px;
+  }
+  .liq-zone.long { background: rgba(232,85,85,0.8); }
+  .liq-zone.warn { background: rgba(212,135,10,0.75); }
+  .liq-zone.short { background: rgba(52,196,112,0.75); }
+  .liq-now {
+    position: absolute;
+    top: -1px;
+    bottom: -1px;
+    width: 1px;
+    background: rgba(247,242,234,0.85);
+  }
+  .liq-labels {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .liq-l { color: rgba(241,153,153,0.85); }
+  .liq-c { color: rgba(247,242,234,0.68); }
+  .liq-s { color: rgba(143,221,157,0.85); }
+
+  @media (max-width: 1200px) {
+    .micro-bars { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 768px) {
+    .chart-header--tv {
+      padding: 8px 10px 10px;
+    }
+    .tv-row--top {
+      align-items: flex-start;
+    }
+    .tv-row--capture {
+      align-items: flex-start;
+    }
+    .capture-window {
+      flex-basis: 100%;
+    }
+    .capture-actions {
+      width: auto;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      margin-left: auto;
+    }
+    .capture-save-btn {
+      width: auto;
+      min-height: 34px;
+      font-size: 11px;
+      background: rgba(38, 166, 154, 0.22);
+    }
+    .capture-open-btn {
+      width: auto;
+      min-height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+    }
+    .ema-tf-strip {
+      max-width: min(100%, 184px);
+      gap: 3px;
+      padding: 3px 5px;
+      border-radius: 7px;
+    }
+    .ema-tf-label {
+      margin-right: 2px;
+      letter-spacing: 0.05em;
+    }
+    .ema-tf-chip {
+      height: 20px;
+      min-width: 30px;
+      padding: 0 6px;
+      font-size: 11px;
+    }
+    /* Mobile indicator pane adjustments (W-0114 Phase A) */
+    .pane-label {
+      font-size: var(--ui-text-xs);
+      padding: 1px 6px;
+      margin-bottom: 1px;
+      line-height: 1.25;
+    }
+    .pane-label-split {
+      gap: 6px;
+    }
+    .pane-hint {
+      letter-spacing: 0.03em;
+    }
+    .pane-close {
+      width: 14px;
+      height: 14px;
+      font-size: 11px;
+    }
+    .pane-vol {
+      min-height: 48px;
+    }
+    .pane-sub {
+      min-height: 64px;
+    }
+    .pane-oi {
+      min-height: 56px;
+    }
+    .pane-cvd {
+      min-height: 64px;
+    }
+  }
+
+  @media (max-width: 425px) {
+    .pane-label { font-size: var(--ui-text-xs); margin-bottom: 2px; }
+  }
+</style>

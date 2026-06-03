@@ -1,0 +1,15 @@
+/* W-0561 PR2: Chart color tokens — Binance/velo.xyz palette */
+:root {
+  --candle-up:        #adca7c;
+  --candle-down:      #cf7f8f;
+  --candle-up-wick:   rgba(173, 202, 124, 0.6);
+  --candle-down-wick: rgba(207, 127, 143, 0.6);
+  --volume-up:        rgba(173, 202, 124, 0.25);
+  --volume-down:      rgba(207, 127, 143, 0.25);
+  --chart-grid:       rgba(219, 154, 159, 0.05);
+  --chart-crosshair:  rgba(219, 154, 159, 0.2);
+  --chart-border:     rgba(219, 154, 159, 0.12);
+  --chart-text:       rgba(247, 242, 234, 0.52);
+  --sr-support:       rgba(173, 202, 124, 0.38);
+  --sr-resist:        rgba(207, 127, 143, 0.38);
+}

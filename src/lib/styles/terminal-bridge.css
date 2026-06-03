@@ -1,0 +1,26 @@
+/*
+ * Terminal Token Bridge — W-0583
+ * Maps undefined/legacy CSS custom props → --sc-* canonical tokens.
+ * Imported in app/src/routes/cogochi/+layout.svelte only.
+ * Delete when all terminal panels migrate to --sc-* directly.
+ */
+:root {
+  /* Bespoke panel vars (SizerCard, DecisionDeck) → sc-* */
+  --fg-primary:   var(--sc-text-0);
+  --fg-strong:    var(--sc-text-0);
+  --fg-muted:     var(--sc-text-2);
+  --fg-dim:       var(--sc-text-3);
+  --border-1:     var(--sc-line-soft);
+  --border-2:     var(--sc-line);
+
+  /* Signal color aliases (undefined in global CSS) */
+  --signal-long:  var(--accent-pos);
+  --signal-short: var(--accent-neg);
+  --signal-wait:  var(--accent-amb);
+
+  /* Amb alias used in panel-base.css and bespoke panels */
+  --amb:          var(--accent-amb);
+
+  /* Brand alias (bespoke panels use --brand) */
+  --brand:        var(--sc-accent);
+}

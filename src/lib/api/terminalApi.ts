@@ -1,0 +1,496 @@
+// ═══════════════════════════════════════════════════════════════
+// WTD — Terminal Scan API Client (browser-side)
+// ═══════════════════════════════════════════════════════════════
+//
+// Wraps /api/terminal/scan/* endpoints for the Terminal page.
+
+import type {
+  TerminalScanSummary,
+  TerminalScanDetail,
+  TerminalScanSignal,
+} from '$lib/services/scanService';
+
+type JsonRecord = Record<string, unknown>;
+
+// ─── Response Types ─────────────────────────────────────────
+
+export interface RunScanResponse {
+  success: boolean;
+  scanId: string;
+  persisted: boolean;
+  warning?: string;
+  data: TerminalScanDetail;
+}
+
+export interface ScanHistoryResponse {
+  success: boolean;
+  records: TerminalScanSummary[];
+  pagination: { limit: number; offset: number; total: number };
+  warning?: string;
+}
+
+export interface ScanDetailResponse {
+  success: boolean;
+  record: TerminalScanDetail | null;
+  warning?: string;
+}
+
+export interface ScanSignalsResponse {
+  success: boolean;
+  records: TerminalScanSignal[];
+  warning?: string;
+}
+
+// ─── Market Snapshot Response ───────────────────────────────
+
+export interface MarketSnapshotResponse {
+  success: boolean;
+  pair: string;
+  timeframe: string;
+  at: number;
+  sources: Record<string, boolean>;
+  warning?: string;
+}
+
+// ─── Helper ─────────────────────────────────────────────────
+
+function isRecord(value: unknown): value is JsonRecord {
+  return typeof value === 'object' && value !== null;
+}
+
+function extractDataRecord(payload: JsonRecord): JsonRecord | null {
+  return isRecord(payload.data) ? payload.data : null;
+}
+
+function parseErrorMessage(payload: unknown, status: number): string {
+  if (isRecord(payload) && typeof payload.error === 'string' && payload.error.trim()) {
+    return payload.error;
+  }
+  return `API error ${status}`;
+}
+
+function isSuccessEnvelope(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  return payload.success === true || payload.ok === true;
+}
+
+function parseNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+function parseTimestampMs(value: unknown): number {
+  const asNumber = parseNumber(value);
+  if (asNumber !== null) return asNumber;
+  if (typeof value === 'string') {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return Date.now();
+}
+
+function toBooleanMap(value: unknown): Record<string, boolean> {
+  if (!isRecord(value)) return {};
+  const mapped: Record<string, boolean> = {};
+  for (const [key, raw] of Object.entries(value)) {
+    mapped[key] = Boolean(raw);
+  }
+  return mapped;
+}
+
+function pickString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function pickWarning(payload: JsonRecord, data: JsonRecord | null): string | undefined {
+  if (typeof payload.warning === 'string') return payload.warning;
+  if (data && typeof data.warning === 'string') return data.warning;
+  return undefined;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export type RunTerminalScanOptions = {
+  /** When true, POST uses async job (202) and polls until completed. */
+  preferAsync?: boolean;
+  signal?: AbortSignal;
+  poll?: { intervalMs?: number; maxMs?: number };
+};
+
+async function pollScanJob(
+  jobId: string,
+  signal: AbortSignal,
+  poll?: RunTerminalScanOptions['poll'],
+): Promise<RunScanResponse> {
+  const intervalMs = poll?.intervalMs ?? 1500;
+  const maxMs = poll?.maxMs ?? 120_000;
+  const deadline = Date.now() + maxMs;
+
+  while (Date.now() < deadline) {
+    if (signal.aborted) throw new Error('Aborted');
+    const res = await fetch(`/api/terminal/scan/jobs/${jobId}`, { signal });
+    const payload: unknown = await res.json().catch(() => null);
+    if (!res.ok) {
+      throw new Error(parseErrorMessage(payload, res.status));
+    }
+    if (!isRecord(payload)) throw new Error('Invalid job poll response');
+
+    if (payload.success === false || payload.state === 'failed') {
+      throw new Error(parseErrorMessage(payload, res.status));
+    }
+
+    if (payload.state === 'completed' || (payload.success === true && payload.scanId && payload.data)) {
+      const data = extractDataRecord(payload);
+      if (!data) throw new Error('Malformed scan payload');
+      return {
+        success: true,
+        scanId: pickString(payload.scanId, pickString(data.scanId, '')),
+        persisted: payload.persisted === true,
+        warning: pickWarning(payload, data),
+        data: data as unknown as TerminalScanDetail,
+      };
+    }
+
+    await sleep(intervalMs);
+  }
+
+  throw new Error('Terminal scan job timed out');
+}
+
+async function apiCall<T extends JsonRecord>(url: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+    signal: options?.signal ?? AbortSignal.timeout(10_000),
+  });
+  const payload: unknown = await res.json().catch(() => null);
+  if (!res.ok || !isSuccessEnvelope(payload)) {
+    throw new Error(parseErrorMessage(payload, res.status));
+  }
+  if (!isRecord(payload)) {
+    throw new Error(`Invalid API response (${res.status})`);
+  }
+  return payload as T;
+}
+
+// ─── Terminal Scan API ──────────────────────────────────────
+
+/** Run a new terminal scan (sync 200, or async 202 + poll when `preferAsync`). */
+export async function runTerminalScan(
+  pair = 'BTC/USDT',
+  timeframe = '4h',
+  options?: RunTerminalScanOptions,
+): Promise<RunScanResponse> {
+  const body = JSON.stringify({
+    pair,
+    timeframe,
+    ...(options?.preferAsync ? { async: true } : {}),
+  });
+
+  const postSignal = options?.signal ?? AbortSignal.timeout(options?.preferAsync ? 30_000 : 10_000);
+  const res = await fetch('/api/terminal/scan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    signal: postSignal,
+  });
+
+  if (res.status === 202) {
+    const accept: unknown = await res.json().catch(() => null);
+    if (!isRecord(accept) || typeof accept.jobId !== 'string') {
+      throw new Error('Invalid async scan handshake');
+    }
+    const pollSignal = options?.signal ?? AbortSignal.timeout(130_000);
+    return pollScanJob(accept.jobId, pollSignal, options?.poll);
+  }
+
+  const payload: unknown = await res.json().catch(() => null);
+  if (!res.ok || !isSuccessEnvelope(payload)) {
+    throw new Error(parseErrorMessage(payload, res.status));
+  }
+  if (!isRecord(payload)) {
+    throw new Error(`Invalid API response (${res.status})`);
+  }
+
+  const data = extractDataRecord(payload);
+  if (!data) throw new Error('Malformed scan payload');
+
+  return {
+    success: true,
+    scanId: pickString(payload.scanId, pickString(data.scanId, '')),
+    persisted: payload.persisted === true,
+    warning: pickWarning(payload, data),
+    data: data as unknown as TerminalScanDetail,
+  };
+}
+
+/** Get scan history */
+export async function getScanHistory(
+  options: { pair?: string; timeframe?: string; limit?: number; offset?: number } = {},
+): Promise<ScanHistoryResponse> {
+  const params = new URLSearchParams();
+  if (options.pair) params.set('pair', options.pair);
+  if (options.timeframe) params.set('timeframe', options.timeframe);
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.offset) params.set('offset', String(options.offset));
+  const payload = await apiCall<JsonRecord>(`/api/terminal/scan/history?${params}`);
+  const data = extractDataRecord(payload);
+
+  const recordsSource = Array.isArray(payload.records)
+    ? payload.records
+    : data && Array.isArray(data.records)
+      ? data.records
+      : [];
+  const paginationSource = isRecord(payload.pagination)
+    ? payload.pagination
+    : data && isRecord(data.pagination)
+      ? data.pagination
+      : {};
+
+  return {
+    success: true,
+    records: recordsSource as TerminalScanSummary[],
+    pagination: {
+      limit: parseNumber(paginationSource.limit) ?? 20,
+      offset: parseNumber(paginationSource.offset) ?? 0,
+      total: parseNumber(paginationSource.total) ?? 0,
+    },
+    warning: pickWarning(payload, data),
+  };
+}
+
+/** Get scan detail by ID */
+export async function getScanDetail(scanId: string): Promise<ScanDetailResponse> {
+  const payload = await apiCall<JsonRecord>(`/api/terminal/scan/${scanId}`);
+  const data = extractDataRecord(payload);
+
+  const recordRaw = payload.record ?? data;
+  const record = isRecord(recordRaw) ? (recordRaw as TerminalScanDetail) : null;
+
+  return {
+    success: true,
+    record,
+    warning: pickWarning(payload, data),
+  };
+}
+
+/** Get scan signals by scan ID */
+export async function getScanSignals(scanId: string): Promise<ScanSignalsResponse> {
+  const payload = await apiCall<JsonRecord>(`/api/terminal/scan/${scanId}/signals`);
+  const data = extractDataRecord(payload);
+  const records = Array.isArray(payload.records)
+    ? payload.records
+    : data && Array.isArray(data.records)
+      ? data.records
+      : [];
+
+  return {
+    success: true,
+    records: records as TerminalScanSignal[],
+    warning: pickWarning(payload, data),
+  };
+}
+
+// ─── Market Data API ────────────────────────────────────────
+
+/** Get market snapshot (aggregated from all sources) */
+export async function getMarketSnapshot(
+  pair = 'BTC/USDT',
+  timeframe = '4h',
+): Promise<MarketSnapshotResponse> {
+  const params = new URLSearchParams();
+  params.set('pair', pair);
+  params.set('timeframe', timeframe);
+
+  const payload = await apiCall<JsonRecord>(`/api/market/snapshot?${params.toString()}`);
+  const data = extractDataRecord(payload) ?? payload;
+
+  return {
+    success: true,
+    pair: pickString(data.pair, pair),
+    timeframe: pickString(data.timeframe, timeframe),
+    at: parseTimestampMs(data.at),
+    sources: toBooleanMap(data.sources),
+    warning: pickWarning(payload, data),
+  };
+}
+
+/** Get Fear & Greed index */
+export async function getFearGreed(): Promise<{
+  success: boolean;
+  current: { value: number; classification: string } | null;
+}> {
+  const payload = await apiCall<JsonRecord>('/api/feargreed');
+  const data = extractDataRecord(payload) ?? payload;
+  const currentRaw = data.current;
+
+  if (!isRecord(currentRaw)) {
+    return { success: true, current: null };
+  }
+
+  const value = parseNumber(currentRaw.value);
+  if (value === null) {
+    return { success: true, current: null };
+  }
+
+  return {
+    success: true,
+    current: {
+      value,
+      classification: pickString(currentRaw.classification, 'unknown'),
+    },
+  };
+}
+
+/** Get CoinGecko global data */
+export async function getCoinGeckoGlobal(): Promise<{
+  success: boolean;
+  data: {
+    btcDominance: number;
+    totalMarketCap: number;
+    marketCapChange24hPct: number;
+  } | null;
+}> {
+  const payload = await apiCall<JsonRecord>('/api/coingecko/global');
+  const data = extractDataRecord(payload) ?? payload;
+  const global = isRecord(data.global) ? data.global : null;
+
+  const btcDominance = parseNumber(data.btcDominance) ?? parseNumber(global?.btcDominance);
+  const totalMarketCap = parseNumber(data.totalMarketCap) ?? parseNumber(global?.totalMarketCapUsd);
+  const marketCapChange24hPct =
+    parseNumber(data.marketCapChange24hPct) ?? parseNumber(global?.marketCapChange24hPct);
+
+  if (btcDominance === null || totalMarketCap === null || marketCapChange24hPct === null) {
+    return { success: true, data: null };
+  }
+
+  return {
+    success: true,
+    data: {
+      btcDominance,
+      totalMarketCap,
+      marketCapChange24hPct,
+    },
+  };
+}
+
+/** Get Yahoo Finance data for a symbol */
+export async function getYahooData(symbol: string): Promise<{
+  success: boolean;
+  symbol: string;
+  points: Array<{ timestampMs: number; close: number }>;
+}> {
+  const payload = await apiCall<JsonRecord>(`/api/yahoo/${encodeURIComponent(symbol)}`);
+  const data = extractDataRecord(payload) ?? payload;
+  const pointsRaw = Array.isArray(data.points) ? data.points : [];
+  const points: Array<{ timestampMs: number; close: number }> = [];
+
+  for (const row of pointsRaw) {
+    if (!isRecord(row)) continue;
+    const timestampMs = parseNumber(row.timestampMs);
+    const close = parseNumber(row.close);
+    if (timestampMs === null || close === null) continue;
+    points.push({ timestampMs, close });
+  }
+
+  return {
+    success: true,
+    symbol: pickString(data.symbol, symbol),
+    points,
+  };
+}
+
+// ─── Pattern Draft from Range (A-04-app) ──────────────────────────
+
+export interface PatternDraftPhaseBody {
+  phase_id: string;
+  duration_min?: number;
+  duration_max?: number;
+  must_have?: string[];
+  forbidden?: string[];
+}
+
+export interface PatternDraftBodyShape {
+  pattern_family?: string;
+  pattern_label?: string;
+  phases?: PatternDraftPhaseBody[];
+  signals_required?: string[];
+  signals_preferred?: string[];
+  signals_forbidden?: string[];
+  search_hints?: Record<string, unknown>;
+  extracted_features?: Record<string, number | null>;
+}
+
+/**
+ * POST /api/patterns/draft-from-range — A-04-app entry point.
+ *
+ * Engine extracts 12 features from chart range and returns a PatternDraft.
+ * 4+ null features → engine returns 422 → throws Error.
+ */
+export async function draftPatternFromRange(
+  symbol: string,
+  startTs: number,
+  endTs: number,
+  timeframe = '15m',
+  signal?: AbortSignal,
+): Promise<PatternDraftBodyShape> {
+  const res = await fetch('/api/patterns/draft-from-range', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      symbol,
+      start_ts: startTs,
+      end_ts: endTs,
+      timeframe,
+    }),
+    signal: signal ?? AbortSignal.timeout(15_000),
+  });
+  const payload: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(parseErrorMessage(payload, res.status));
+  }
+  if (!isRecord(payload)) {
+    throw new Error(`Invalid draft-from-range response (${res.status})`);
+  }
+  return payload as PatternDraftBodyShape;
+}
+
+// ─── AI Parser (A-03-app) ──────────────────────────────────────
+
+export interface AIParserHints {
+  pattern_family?: string;
+  symbol?: string;
+}
+
+/**
+ * POST /api/patterns/parse — A-03-app entry point.
+ *
+ * 자유 텍스트 메모를 PatternDraftBody로 변환.
+ * Engine: ContextAssembler.for_parse_text() + configured LLM runtime + validation.
+ */
+export async function parsePatternFromText(
+  text: string,
+  hints: AIParserHints = {},
+  signal?: AbortSignal,
+): Promise<PatternDraftBodyShape> {
+  const res = await fetch('/api/patterns/parse', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, context_hints: hints }),
+    signal: signal ?? AbortSignal.timeout(25_000),
+  });
+  const payload: unknown = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(parseErrorMessage(payload, res.status));
+  }
+  if (!isRecord(payload)) {
+    throw new Error(`Invalid parse response (${res.status})`);
+  }
+  return payload as PatternDraftBodyShape;
+}

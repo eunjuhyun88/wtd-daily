@@ -1,0 +1,565 @@
+/* ═══════════════════════════════════════════════════════════════
+   Cogochi Design Token System — LIS (Lost In Space) palette
+   Canonical brand: pink (#db9a9f) + ivory (#f7f2ea) on deep black.
+   Single source of truth for all visual properties.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ══════════════════════════════════════════════════════════════
+     SECTION 1 — COLOR PRIMITIVES
+     Raw hex values. Semantic tokens alias these. Do not reference
+     these directly in components.
+     ══════════════════════════════════════════════════════════════ */
+
+  /* ── Neutral scale (grey 0 → 10, dark-first) ── */
+  --sc-grey-0:  #000000;
+  --sc-grey-1:  #0a0a0a;
+  --sc-grey-2:  #111111;
+  --sc-grey-3:  #1a1a1a;
+  --sc-grey-4:  #252525;
+  --sc-grey-5:  #333333;
+  --sc-grey-6:  #484848;
+  --sc-grey-7:  #666666;
+  --sc-grey-8:  #999999;
+  --sc-grey-9:  #cccccc;
+  --sc-grey-10: #f5f5f5;
+
+  /* ── Market pair (chart-canonical: sage green / muted rose) ── */
+  --sc-green-500: #22c55e;   /* bull / up — confirmed */
+  --sc-green-300: #adca7c;   /* bull highlight — chart candle up */
+  --sc-red-500:   #ef4444;   /* bear / down — confirmed */
+  --sc-red-300:   #cf7f8f;   /* bear highlight — chart candle down */
+
+  /* ── Blue interactive scale ── */
+  --sc-blue-600: #1d4ed8;
+  --sc-blue-500: #3b82f6;
+  --sc-blue-400: #60a5fa;
+  --sc-blue-300: #93c5fd;
+
+  /* ── Yellow warning scale ── */
+  --sc-yellow-500: #eab308;
+  --sc-yellow-400: #facc15;
+  --sc-yellow-300: #fde047;
+
+  /* ── Orange scale (optional accent, NOT the brand primary) ── */
+  --sc-orange-500: #FF6B35;
+  --sc-orange-400: #ff8558;
+  --sc-orange-300: #ffa07a;
+
+  /* ── LOST IN SPACE legacy palette (kept for backward compat) ── */
+  --lis-rgb-ink: 0, 0, 0;
+  --lis-rgb-panel: 10, 10, 10;
+  --lis-rgb-panel-hi: 20, 20, 20;
+  --lis-rgb-pink: 219, 154, 159;
+  --lis-rgb-cream: 242, 209, 147;
+  --lis-rgb-ivory: 247, 242, 234;
+  --lis-rgb-lime: 74, 222, 128;
+  --lis-rgb-shadow: 0, 0, 0;
+
+  --lis-bg-0: #000000;
+  --lis-bg-1: #0a0a0a;
+  --lis-bg-2: #141414;
+  --lis-surface-0: rgba(12, 14, 20, 0.68);
+  --lis-surface-1: rgba(16, 18, 24, 0.82);
+  --lis-surface-2: rgba(20, 22, 28, 0.9);
+  --lis-accent: #db9a9f;
+  --lis-highlight: #f2d193;
+  --lis-ivory: #f7f2ea;
+  --lis-positive: #adca7c;
+  --lis-negative: #cf7f8f;
+  --lis-border: rgba(var(--lis-rgb-pink), 0.22);
+  --lis-border-soft: rgba(var(--lis-rgb-pink), 0.12);
+  --lis-border-strong: rgba(var(--lis-rgb-pink), 0.34);
+  --lis-glow-pink: 0 0 22px rgba(var(--lis-rgb-pink), 0.22);
+  --lis-glow-lime: 0 0 18px rgba(var(--lis-rgb-lime), 0.1);
+  --lis-shadow-md: 0 18px 36px rgba(var(--lis-rgb-shadow), 0.36);
+  --lis-shadow-lg: 0 32px 80px rgba(var(--lis-rgb-shadow), 0.6);
+
+  /* ══════════════════════════════════════════════════════════════
+     SECTION 2 — SEMANTIC TOKENS
+     Aliases that give meaning to primitives. Components use these.
+     ══════════════════════════════════════════════════════════════ */
+
+  /* ── COLORS: Backgrounds ── */
+  --sc-bg-0: var(--lis-bg-0);          /* deepest space background */
+  --sc-bg-1: var(--lis-bg-1);          /* cards, panels */
+  --sc-bg-2: var(--lis-bg-2);          /* elevated surfaces */
+  --sc-surface: var(--lis-surface-0);  /* interactive surface */
+  --sc-surface-2: var(--lis-surface-1);/* hover / elevated */
+  --sc-overlay: rgba(0, 0, 0, 0.88);   /* modal backdrop */
+  --sc-bg-violet: var(--lis-bg-1);
+  --sc-bg-dusk: var(--lis-surface-1);
+
+  /* ── COLORS: Borders & Lines ── */
+  --sc-line: var(--lis-border);
+  --sc-line-soft: var(--lis-border-soft);
+  --sc-line-hard: var(--lis-border-strong);
+
+  /* ── COLORS: Accent (LIS pink — canonical Cogochi brand) ── */
+  --sc-accent: var(--lis-accent);              /* primary accent (pink #db9a9f) */
+  --sc-accent-hover: #e6a9ad;
+  --sc-accent-bg: rgba(var(--lis-rgb-pink), 0.08);
+  --sc-accent-bg-subtle: rgba(var(--lis-rgb-pink), 0.05);
+  --sc-accent-2: var(--lis-accent);            /* legacy alias -> LIS pink */
+  --sc-accent-3: var(--lis-ivory);             /* legacy decorative alias -> ivory text */
+
+  /* ── COLORS: Semantic roles ── */
+  --sc-market-up:   var(--sc-green-300);       /* bull / gain */
+  --sc-market-down: var(--sc-red-300);         /* bear / loss */
+  --sc-interactive: var(--sc-blue-400);        /* active interaction state */
+  --sc-warning:     var(--sc-yellow-400);      /* warning / pending */
+  --sc-danger:      var(--sc-red-500);         /* error / risk */
+  --sc-success:     var(--sc-green-500);       /* confirmed success */
+
+  /* ── COLORS: Legacy semantic names (kept for existing components) ── */
+  --sc-good: var(--sc-market-up);              /* gain, success, long */
+  --sc-good-bg: rgba(var(--lis-rgb-lime), 0.16);
+  --sc-bad: var(--sc-market-down);             /* loss, error, short */
+  --sc-bad-bg: rgba(248, 113, 113, 0.16);
+  --sc-warn: var(--lis-accent);                /* legacy: pink-themed warning */
+  --sc-warn-bg: rgba(var(--lis-rgb-pink), 0.12);
+  --sc-info: rgba(var(--lis-rgb-pink), 0.88);  /* legacy: pink informational */
+
+  /* ── COLORS: Bias aliases (terminal usage) ── */
+  --sc-bias-bull: var(--sc-market-up);
+  --sc-bias-bear: var(--sc-market-down);
+
+  /* ── COLORS: Text (Bloomberg-tier readability) ── */
+  --sc-text-0: var(--lis-ivory);               /* primary text (warm ivory) */
+  --sc-text-1: rgba(247, 242, 234, 0.84);      /* secondary — clearly readable */
+  --sc-text-2: rgba(247, 242, 234, 0.58);      /* muted — still legible */
+  --sc-text-3: rgba(247, 242, 234, 0.40);      /* dim — labels, hints */
+
+  /* ── COLORS: Terminal surface aliases (backward compat) ── */
+  --sc-terminal-bg:          var(--sc-bg-0);
+  --sc-terminal-surface:     var(--sc-bg-1);
+  --sc-terminal-border:      var(--sc-line);
+  --sc-terminal-border-soft: var(--sc-line-soft);
+
+  /* ── COLORS: Border levels (3-tier scale, replaces scattered rgba) ──
+     Use --sc-line-1 for subtle separators, --sc-line-2 for panel edges,
+     --sc-line-3 for inputs and emphasized borders.
+     Existing --sc-line / --sc-line-soft / --sc-line-hard remain for
+     lis-themed surfaces; these level aliases are for flat neutral use. */
+  --sc-line-1: rgba(255, 255, 255, 0.04);   /* row separator (faintest) */
+  --sc-line-2: rgba(255, 255, 255, 0.07);   /* panel border default */
+  --sc-line-3: rgba(255, 255, 255, 0.14);   /* input / emphasized border */
+
+  /* ── COLORS: Interaction state backgrounds ──
+     Row / list hover → --sc-hover-bg
+     Row selected bg → --sc-selected-bg
+     Row selected left accent → --sc-selected-accent (inset border)
+     Button/chip pressed → --sc-active-bg */
+  --sc-hover-bg:        rgba(255, 255, 255, 0.04);
+  --sc-active-bg:       rgba(255, 255, 255, 0.06);
+  --sc-selected-bg:     rgba(96, 165, 250, 0.08);
+  --sc-selected-accent: rgba(96, 165, 250, 0.70);  /* 2px left inset border */
+
+  /* ── ICON SCALE ──
+     Matches Icon.svelte's accepted size prop (16 | 20 | 24).
+     Use CSS var for consistency; pass as JS prop where needed. */
+  --sc-icon-sm: 16px;   /* nav rail, inline chips */
+  --sc-icon-md: 20px;   /* mobile nav, toolbar */
+  --sc-icon-lg: 24px;   /* hero / large actions */
+
+  /* ── PAGE CHROME ──
+     Bottom padding accounts for mobile bottom nav (56px) + safe area.
+     Desktop: standard 24px. Apply to scrollable page <main> elements. */
+  --sc-page-pb: 24px;
+
+  /* ══════════════════════════════════════════════════════════════
+     SECTION 3 — TYPOGRAPHY: Font Families
+     Canonical Cogochi stack: Bebas Neue display + Space Grotesk body
+     + JetBrains Mono mono. DO NOT replace with IBM Plex.
+     ══════════════════════════════════════════════════════════════ */
+
+  --sc-font-display: 'Bebas Neue', 'Orbitron', monospace;
+  --sc-font-body:    'Space Grotesk', sans-serif;
+  --sc-font-mono:    'JetBrains Mono', monospace;
+
+  /* Legacy specialty stacks preserved */
+  --sc-font-pixel: 'Press Start 2P', monospace;
+  --sc-font-retro: 'VT323', monospace;
+
+  /* ══════════════════════════════════════════════════════════════
+     SECTION 3 (cont.) — TYPOGRAPHY: Fluid scale (clamp)
+     Viewport-responsive. Use these for all new UI.
+     ══════════════════════════════════════════════════════════════ */
+  --sc-fs-9:       clamp(9px, 0.65rem + 0.1vw, 10px);    /* chart mono mini labels */
+  --sc-fs-11:      clamp(11px, 0.78rem + 0.1vw, 12px);   /* small mono */
+  --sc-fs-12:      clamp(12px, 0.8rem + 0.15vw, 13px);   /* body small */
+  --sc-fs-14:      clamp(14px, 0.9rem + 0.15vw, 15px);   /* body */
+  --sc-fs-16:      clamp(16px, 1rem + 0.2vw, 17px);      /* body large */
+  --sc-fs-20:      clamp(18px, 1.1rem + 0.3vw, 20px);    /* subheading */
+  --sc-fs-24:      clamp(22px, 1.3rem + 0.5vw, 26px);    /* heading */
+  --sc-fs-32:      clamp(26px, 1.5rem + 1vw, 34px);      /* display */
+  --sc-fs-display: clamp(32px, 2rem + 1.5vw, 48px);      /* hero */
+
+  /* ── TYPOGRAPHY: Font Sizes — fixed (WCAG: min 9px, Bloomberg readability) ── */
+  --sc-fs-2xs: 10px;
+  --sc-fs-xs: 11px;
+  --sc-fs-sm: 12px;
+  --sc-fs-base: 13px;
+  --sc-fs-md: 14px;
+  --sc-fs-lg: 16px;
+  --sc-fs-xl: 19px;
+  --sc-fs-2xl: 22px;
+  --sc-fs-3xl: 28px;
+  --sc-fs-4xl: 36px;
+
+  /* ── TYPOGRAPHY: Line Heights ── */
+  --sc-lh-tight: 1.2;
+  --sc-lh-normal: 1.45;
+  --sc-lh-relaxed: 1.6;
+
+  /* ══════════════════════════════════════════════════════════════
+     SECTION 4 — SPACING (4px baseline)
+     ══════════════════════════════════════════════════════════════ */
+  --sc-sp-0: 0;
+  --sc-sp-px: 1px;
+  --sc-sp-0_5: 2px;
+  --sc-sp-1: 4px;
+  --sc-sp-1_5: 6px;
+  --sc-sp-2: 8px;
+  --sc-sp-3: 12px;
+  --sc-sp-4: 16px;
+  --sc-sp-5: 20px;
+  --sc-sp-6: 24px;
+  --sc-sp-8: 32px;
+  --sc-sp-10: 40px;
+  --sc-sp-12: 48px;
+  --sc-sp-16: 64px;
+
+  /* ══════════════════════════════════════════════════════════════
+     SECTION 5 — RADII
+     ══════════════════════════════════════════════════════════════ */
+  --sc-radius-0:    0;
+  --sc-radius-1:    2px;    /* terminal — near-square */
+  --sc-radius-2:    4px;    /* compact chips, inputs */
+  --sc-radius-3:    8px;    /* cards, panels */
+  --sc-radius-full: 999px;  /* pills */
+
+  /* ── Legacy radius aliases (kept for existing components) ── */
+  --sc-border: 1px solid var(--sc-line);
+  --sc-border-soft: 1px solid var(--sc-line-soft);
+  --sc-radius-sm: var(--sc-radius-2);
+  --sc-radius-md: 6px;
+  --sc-radius-lg: var(--sc-radius-3);
+  --sc-radius-xl: 12px;
+  --sc-radius-pill: var(--sc-radius-full);
+
+  /* ══════════════════════════════════════════════════════════════
+     SECTION 6 — MOTION
+     ══════════════════════════════════════════════════════════════ */
+  --sc-ease:      cubic-bezier(0.22, 1, 0.36, 1);  /* Terminal Brutalism glide */
+  --sc-dur-fast:  140ms;
+  --sc-dur:       200ms;
+  --sc-dur-slow:  320ms;
+
+  /* ── Legacy motion aliases ── */
+  --sc-duration-fast:   var(--sc-dur-fast);
+  --sc-duration-normal: var(--sc-dur);
+  --sc-duration-slow:   var(--sc-dur-slow);
+
+  /* ══════════════════════════════════════════════════════════════
+     SECTION 7 — ELEVATION
+     Subtle, no blur puffs. Terminal surface feel.
+     ══════════════════════════════════════════════════════════════ */
+  --sc-elev-1: 0 1px 0 rgba(255, 255, 255, 0.03) inset;          /* surface lift */
+  --sc-elev-2: 0 8px 16px -8px rgba(0, 0, 0, 0.55);             /* panel */
+  --sc-elev-3: 0 18px 32px -12px rgba(0, 0, 0, 0.65);           /* modal / overlay */
+
+  /* ── SHADOWS ── */
+  --sc-shadow-sm: 0 8px 18px rgba(0, 0, 0, 0.18);
+  --sc-shadow-md: var(--lis-shadow-md);
+  --sc-shadow-lg: var(--lis-shadow-lg);
+  --sc-shadow-glow: var(--lis-glow-pink);
+
+  /* ── Z-INDEX SCALE ── */
+  --sc-z-base: 1;
+  --sc-z-panel: 10;
+  --sc-z-sticky: 50;
+  --sc-z-header: 100;
+  --sc-z-dropdown: 150;
+  --sc-z-modal-backdrop: 200;
+  --sc-z-modal: 210;
+  --sc-z-notification: 300;
+  --sc-z-toast: 310;
+  --sc-z-tooltip: 400;
+
+  /* ── TRANSITIONS ── */
+  --sc-ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --sc-duration-fast: 120ms;
+  --sc-duration-normal: 200ms;
+  --sc-duration-slow: 350ms;
+
+  /* ── TERMINAL LAYOUT (W-0563 A-1) ── */
+  --term-toolbar-h: 30px;
+  --term-gap-1: 4px;
+  --term-gap-2: 8px;
+  --term-gap-3: 12px;
+
+  /* ── LAYOUT ── */
+  --sc-header-h: 52px;
+  --sc-header-h-mobile: 52px;
+  --sc-mobile-nav-h: 68px;
+  --sc-bottom-bar-h: 28px;
+  --sc-tab-strip-h: 34px;
+
+  /* ── BREAKPOINTS (reference — use in @media queries) ── */
+  /* Canonical 4-BP system (W-0563 A-3): mobile/tablet/desktop/wide */
+  --bp-mobile:  430px;   /* xs: 0-430 */
+  --bp-tablet:  768px;   /* sm: 431-768 */
+  --bp-desktop: 1440px;  /* md: 769-1440 */
+  --bp-wide:    1920px;  /* lg: 1441+ */
+  /* Legacy (kept for backward compat) */
+  --sc-bp-xs: 480px;
+  --sc-bp-sm: 768px;
+  --sc-bp-md: 1024px;
+  --sc-bp-lg: 1280px;
+
+  /* ── TOUCH TARGETS (WCAG 2.5.8) ── */
+  --sc-touch-min: 44px;      /* Level AAA — primary interactive */
+  --sc-touch-sm: 36px;       /* acceptable with adequate spacing */
+
+  /* ── RESPONSIVE FONT SIZES (clamp pattern) ── */
+  --sc-fs-resp-2xs: clamp(9px, 2vw, 10px);
+  --sc-fs-resp-xs: clamp(10px, 2.2vw, 11px);
+  --sc-fs-resp-sm: clamp(11px, 2.4vw, 12px);
+  --sc-fs-resp-base: clamp(12px, 2.6vw, 13px);
+
+  /* ── SAFE AREA (notch devices) ── */
+  --sc-safe-top: env(safe-area-inset-top, 0px);
+  --sc-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --sc-safe-left: env(safe-area-inset-left, 0px);
+  --sc-safe-right: env(safe-area-inset-right, 0px);
+
+  /* ═══════════════════════════════════════════════════════════
+     BACKWARD COMPATIBILITY MAPPINGS
+     These map old variable names to new tokens.
+     Remove these after full migration is complete.
+     ═══════════════════════════════════════════════════════════ */
+
+  /* app.css legacy → new tokens */
+  --bg: var(--sc-bg-0);
+  --s1: var(--sc-bg-1);
+  --s2: var(--sc-bg-2);
+  --blk: #0A0808;
+  --card: var(--sc-surface);
+  --card2: var(--sc-surface-2);
+  --yel: var(--sc-text-0);
+  --pk: var(--sc-accent);
+  --grn: var(--sc-good);
+  --red: var(--sc-bad);
+  --ora: var(--sc-accent);
+  --blu: var(--sc-accent);
+  --pur: var(--sc-accent);
+  --gold: var(--sc-accent);
+  --cyan: var(--sc-accent);
+  --lime: var(--sc-accent);
+  --chain: var(--sc-accent);
+  --fg: var(--sc-text-0);
+  --fg-strong: rgba(255, 255, 255, 0.95);
+  --fg-medium: rgba(255, 255, 255, 0.7);
+  --dim: rgba(255, 255, 255, 0.5);
+  --dimmer: rgba(255, 255, 255, 0.18);
+
+  /* Font aliases (old → new) */
+  --fd: var(--sc-font-display);
+  --fb: var(--sc-font-body);
+  --fm: var(--sc-font-mono);
+  --fc: 'Impact', 'Arial Black', var(--sc-font-display);
+  --fcomic: 'Comic Sans MS', 'Chalkboard SE', var(--sc-font-mono);
+  --fdisplay: 'Bebas Neue', sans-serif;
+  --fp: var(--sc-font-pixel);
+  --fv: var(--sc-font-retro);
+
+  /* Font size aliases (old → new) */
+  --fs-xs: var(--sc-fs-2xs);
+  --fs-sm: var(--sc-fs-xs);
+  --fs-base: var(--sc-fs-sm);
+  --fs-md: var(--sc-fs-base);
+  --fs-lg: var(--sc-fs-md);
+  --fs-xl: var(--sc-fs-lg);
+  --fs-2xl: var(--sc-fs-xl);
+  --fs-3xl: var(--sc-fs-2xl);
+  --lh-tight: var(--sc-lh-tight);
+  --lh-normal: var(--sc-lh-normal);
+  --lh-relaxed: var(--sc-lh-relaxed);
+
+  /* Border aliases (comic → clean) */
+  --bdr: var(--sc-border);
+  --bdr-thick: var(--sc-border);
+  --shadow: var(--sc-shadow-sm);
+  --shadow-sm: var(--sc-shadow-sm);
+
+  /* arena-tone.css compatibility */
+  --arena-bg-0: var(--sc-bg-0);
+  --arena-bg-1: var(--sc-bg-1);
+  --arena-bg-2: var(--sc-bg-2);
+  --arena-surface: var(--sc-surface);
+  --arena-surface-2: var(--sc-surface-2);
+  --arena-line: var(--sc-line);
+  --arena-line-soft: var(--sc-line-soft);
+  --arena-accent: var(--sc-accent);
+  --arena-accent-2: var(--sc-accent-2);
+  --arena-good: var(--sc-good);
+  --arena-bad: var(--sc-bad);
+  --arena-warn: var(--sc-warn);
+  --arena-text: var(--sc-text-0);
+  --arena-text-dim: var(--sc-text-1);
+  --arena-text-muted: var(--sc-text-2);
+  --arena-shadow: var(--sc-shadow-md);
+}
+
+/* ── GLOBAL FOCUS STATES (a11y) ── */
+:focus-visible {
+  outline: 2px solid var(--sc-accent);
+  outline-offset: 2px;
+}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2); }
+::-webkit-scrollbar-thumb { background: rgba(219, 154, 159, 0.35); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(219, 154, 159, 0.55); }
+
+.cg-rainbow-divider {
+  background: linear-gradient(90deg, transparent, rgba(219, 154, 159, 0.36), transparent);
+}
+
+/* ── ANIMATIONS ── */
+@keyframes sc-pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+@keyframes sc-slide-up { from { opacity: 0; transform: translateY(12px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes sc-slide-in { from { opacity: 0; transform: translateX(-12px) } to { opacity: 1; transform: translateX(0) } }
+@keyframes sc-fade-in { from { opacity: 0 } to { opacity: 1 } }
+@keyframes sc-shake { 0%, 100% { transform: translateX(0) } 25% { transform: translateX(-3px) } 75% { transform: translateX(3px) } }
+@keyframes sc-float { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-6px) } }
+@keyframes sc-spin { from { transform: rotate(0) } to { transform: rotate(360deg) } }
+@keyframes sc-ticker { 0% { transform: translateX(0) } 100% { transform: translateX(-50%) } }
+
+/* Legacy animation aliases */
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.4 } }
+@keyframes slideUp { from { opacity: 0; transform: translateY(20px) } to { opacity: 1; transform: translateY(0) } }
+@keyframes slideIn { from { opacity: 0; transform: translateX(-20px) } to { opacity: 1; transform: translateX(0) } }
+@keyframes shake { 0%, 100% { transform: translateX(0) } 25% { transform: translateX(-3px) } 75% { transform: translateX(3px) } }
+@keyframes float { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
+@keyframes spin { from { transform: rotate(0) } to { transform: rotate(360deg) } }
+@keyframes ticker { 0% { transform: translateX(0) } 100% { transform: translateX(-50%) } }
+
+/* ── SELECTION ── */
+::selection {
+  background: var(--sc-accent);
+  color: #000;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PERFORMANCE: backdrop-filter / reduced-motion
+   ═══════════════════════════════════════════════════════════════ */
+
+/* --sc-page-pb: mobile bottom nav needs extra clearance */
+@media (max-width: 768px) {
+  :root {
+    --sc-page-pb: max(68px, calc(env(safe-area-inset-bottom, 0px) + 68px));
+  }
+}
+
+/* Disable backdrop-filter on mobile (GPU-intensive) */
+@media (max-width: 768px) {
+  .perf-no-blur,
+  .arena-page .result-overlay,
+  .arena-page .pvp-lobby-overlay,
+  .arena-page .chat-area,
+  .chart-legend-wrap,
+  .chart-controls-bar {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* Disable all animations and backdrop-filters for reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  *:not(.modal-overlay):not(.wallet-overlay) {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ACCESSIBILITY: minimum font size enforcement
+   ═══════════════════════════════════════════════════════════════ */
+
+/* Global minimum font-size floor for readability (WCAG) */
+/* Components should use --sc-fs-2xs (9px) as the minimum.
+   This rule catches any element that falls below 9px. */
+
+/* ═══════════════════════════════════════════════════════════════
+   W-0402 — Terminal/Cogochi redesign alias layer + density
+   Spec: work/active/W-0402-terminal-cogochi-redesign.md §1
+   These names are stable across PR1-16. They alias existing --sc-*
+   primitives so brand identity (LIS pink/ivory) is preserved.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Type scale (5-step) */
+  --type-xs: var(--sc-fs-xs);    /* 11px — L3 micro labels */
+  --type-sm: var(--sc-fs-sm);    /* 12px — L2 metrics, body */
+  --type-md: var(--sc-fs-md);    /* 14px — L1 default, buttons */
+  --type-lg: var(--sc-fs-lg);    /* 16px — hero numbers */
+  --type-xl: var(--sc-fs-2xl);   /* 22px — dashboard hero */
+
+  /* Spacing scale (6-step, density-aware via --sp-base) */
+  --sp-base: 8px;     /* default = comfortable */
+  --sp-1: calc(var(--sp-base) * 0.5);   /* 4 */
+  --sp-2: var(--sp-base);                /* 8 */
+  --sp-3: calc(var(--sp-base) * 1.5);   /* 12 */
+  --sp-4: calc(var(--sp-base) * 2);     /* 16 */
+  --sp-5: calc(var(--sp-base) * 3);     /* 24 */
+  --sp-6: calc(var(--sp-base) * 4);     /* 32 */
+
+  /* Color tier — semantic aliases (brand: LIS pink/ivory preserved) */
+  --text-primary:   var(--sc-text-0);
+  --text-secondary: var(--sc-text-1);
+  --text-tertiary:  var(--sc-text-2);
+
+  --accent-pos: var(--lis-positive);   /* chart-canonical sage green — gain / LONG */
+  --accent-neg: var(--lis-negative);   /* chart-canonical muted rose — loss / SHORT */
+  --accent-amb: var(--lis-highlight);  /* #f2d193 — neutral / AVOID / active */
+
+  /* Shorthand market aliases — single source, use these in all new components */
+  --market-up:   var(--sc-market-up);
+  --market-down: var(--sc-market-down);
+
+  --surface-0: var(--sc-bg-0);
+  --surface-1: var(--sc-bg-1);
+  --surface-2: var(--sc-bg-2);
+  --border-subtle: var(--sc-line-soft);
+
+  /* Layout tokens — Terminal app-shell grid widths (PR2 consumes) */
+  --watch-w: 200px;   /* WatchlistRail (folded → 20px) */
+  --ai-w:    320px;   /* AIAgentPanel (wide → 480px, folded → 20px) */
+}
+
+/* Density mode toggle — W-0402 §1.4 */
+[data-density='compact']:root,
+:root[data-density='compact'],
+[data-density='compact'] {
+  --sp-base: 4px;
+}
+
+[data-density='comfortable']:root,
+:root[data-density='comfortable'],
+[data-density='comfortable'] {
+  --sp-base: 8px;
+}
+
+/* App-shell layout state hooks (PR2/PR3 consume) */
+[data-watch='folded'] { --watch-w: 20px; }
+[data-ai='folded']    { --ai-w:    20px; }
+[data-ai='wide']      { --ai-w:    480px; }
