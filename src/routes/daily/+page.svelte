@@ -1668,7 +1668,7 @@
           {#if options.skew25d != null}
             <div class="metric">
               <div class="metric-l">25Δ Skew</div>
-              <div class="metric-v" style:color={pctColor(-options.skew25d)}>{fmtPct(options.skew25d * 100)}</div>
+              <div class="metric-v" style:color={pctColor(-options.skew25d)}>{fmtPct(options.skew25d)}</div>
             </div>
           {/if}
           {#if options.gamma?.maxPainDistancePct != null}
