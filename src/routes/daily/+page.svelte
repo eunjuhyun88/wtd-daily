@@ -286,6 +286,11 @@
         }
       : null
   );
+  const btcDominance = $derived(
+    (thermometerPayload?.btcDominance != null)
+      ? thermometerPayload.btcDominance
+      : null
+  );
   const fgPulse = $derived(
     data.feargreed?.current
       ? { value: data.feargreed.current.value, classification: data.feargreed.current.classification }
@@ -348,10 +353,22 @@
   const marketNews = $derived(marketNewsPayload?.data?.records ?? []);
 
   // ── New stock + commodity + unlock surfaces ────────────────────
-  const krIndices = $derived(krIndicesPayload?.data ?? null);
+  const krIndices = $derived(
+    (data as { krIndices?: { data?: { kospi?: unknown; kosdaq?: unknown } } }).krIndices?.data != null
+      ? (data as { krIndices?: { data?: { kospi?: { price?: number; changePct?: number; spark?: number[] } | null; kosdaq?: { price?: number; changePct?: number; spark?: number[] } | null } } }).krIndices!.data!
+      : krIndicesPayload?.data ?? null
+  );
   const krStocks = $derived(krStocksPayload?.data?.stocks ?? []);
-  const usStocks = $derived(usStocksPayload?.data?.stocks ?? []);
-  const commodities = $derived(commoditiesPayload?.data ?? null);
+  const usStocks = $derived(
+    (data as { usStocks?: { data?: { stocks?: Array<{ symbol: string; name: string; price?: number | null; changePct?: number | null; spark?: number[]; trend1m?: number | null }> } } }).usStocks?.data?.stocks?.length
+      ? (data as { usStocks?: { data?: { stocks?: Array<{ symbol: string; name: string; price?: number | null; changePct?: number | null; spark?: number[]; trend1m?: number | null }> } } }).usStocks!.data!.stocks!
+      : usStocksPayload?.data?.stocks ?? []
+  );
+  const commodities = $derived(
+    (data as { commodities?: { data?: { gold?: unknown; oil?: unknown; silver?: unknown; copper?: unknown } } }).commodities?.data != null
+      ? (data as { commodities?: { data?: { gold?: { price?: number; changePct?: number; spark?: number[] } | null; oil?: { price?: number; changePct?: number; spark?: number[] } | null; silver?: { price?: number; changePct?: number; spark?: number[] } | null; copper?: { price?: number; changePct?: number; spark?: number[] } | null } } }).commodities!.data!
+      : commoditiesPayload?.data ?? null
+  );
   const unlocks = $derived(data.tokenUnlocks?.data?.events ?? []);
 
   // ── Top-10 coin board ──────────────────────────────────────────
@@ -584,7 +601,7 @@
 
     const deepTimer = setTimeout(() => {
       if (!hasObservedDeep) void loadDeepData();
-    }, 2_500);
+    }, 400);
 
     let observer: IntersectionObserver | null = null;
     if (typeof IntersectionObserver !== 'undefined' && deepTriggerEl) {
@@ -1281,6 +1298,20 @@
           {/if}
         </div>
       {/if}
+      {#if btcDominance != null}
+        <div class="rhs">
+          <span class="rhs-l">BTC.D</span>
+          <span class="rhs-v">{btcDominance.toFixed(1)}%</span>
+          <span class="rhs-s">dominance</span>
+        </div>
+      {/if}
+      {#if macroPulse?.spx?.price != null}
+        <div class="rhs">
+          <span class="rhs-l">SPX</span>
+          <span class="rhs-v">{fmtNum(macroPulse.spx.price, 0)}</span>
+          <span class="rhs-s" style:color={pctColor(macroPulse.spx.changePct)}>{fmtPct(macroPulse.spx.changePct)}</span>
+        </div>
+      {/if}
     </div>
     <div class="rh-time">
       <span>Updated {new Date(data.generatedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -1445,29 +1476,195 @@
       {/if}
     </section>
 
-    <!-- Card: BTC Options -->
-    {#if options && (options.putCallRatioOi != null || options.putCallRatioVol != null || options.skew25d != null)}
-      <section class="card card-options" aria-label="BTC options">
-        <div class="card-h">
-          <span class="card-title">BTC Options</span>
-          <span class="card-meta">
-            <span class="src-chip">Deribit</span>
-            <span class="card-sub">PCR · Skew · Max Pain</span>
-          </span>
+    <!-- Card: KR Top Stocks -->
+    <section class="card card-kr-stocks" aria-label="Korean stocks">
+      <div class="card-h">
+        <span class="card-title">Korean Stocks</span>
+        <span class="card-meta">
+          <span class="src-chip">Yahoo Finance</span>
+          <span class="card-sub">Top KR</span>
+        </span>
+      </div>
+      {#if krStocks.length > 0}
+        <ul class="macro-list">
+          {#each krStocks.slice(0, 8) as s (s.symbol)}
+            {#if isUsableMarketQuote(s)}
+              <li class="macro-row">
+                <span class="macro-l">{s.symbol}</span>
+                <span class="macro-v">{guardedPrice(s, 0)}</span>
+                <span class="row-spark" aria-hidden="true">
+                  <svg viewBox="0 0 64 18" preserveAspectRatio="none">
+                    <path d={rowSparkArea(s.spark)} fill={rowSparkColor(s.spark)} fill-opacity="0.12" />
+                    <path d={rowSparkPath(s.spark)} stroke={rowSparkColor(s.spark)} stroke-width="1.2" fill="none" />
+                  </svg>
+                </span>
+                <span class="macro-c" style:color={pctColor(s.changePct)}>
+                  <span class="delta-bar" style:width={deltaBarWidth(s.changePct)} style:background={pctColor(s.changePct)}></span>
+                  {guardedPct(s)}
+                </span>
+              </li>
+            {/if}
+          {/each}
+        </ul>
+      {:else}
+        <div class="skel-rows">
+          {#each [72, 55, 90, 68, 80, 60, 75, 50] as w}
+            <span class="skel-line" style:width="{w}%"></span>
+          {/each}
         </div>
+      {/if}
+    </section>
+
+    <!-- Card: Commodities -->
+    <section class="card card-commodities" aria-label="Commodities">
+      <div class="card-h">
+        <span class="card-title">Commodities</span>
+        <span class="card-meta">
+          <span class="src-chip">COMEX · NYMEX</span>
+          <span class="card-sub">Gold · Oil · Silver · Copper</span>
+        </span>
+      </div>
+      {#if commodities && (commodities.gold || commodities.oil || commodities.silver || commodities.copper)}
+        <ul class="macro-list">
+          {#if commodities.gold}
+            <li class="macro-row">
+              <span class="macro-l">Gold</span>
+              <span class="macro-v">${fmtNum(commodities.gold.price, 1)}</span>
+              <span class="row-spark" aria-hidden="true">
+                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
+                  <path d={rowSparkArea(commodities.gold.spark)} fill={rowSparkColor(commodities.gold.spark)} fill-opacity="0.12" />
+                  <path d={rowSparkPath(commodities.gold.spark)} stroke={rowSparkColor(commodities.gold.spark)} stroke-width="1.2" fill="none" />
+                </svg>
+              </span>
+              <span class="macro-c" style:color={pctColor(commodities.gold.changePct)}>
+                <span class="delta-bar" style:width={deltaBarWidth(commodities.gold.changePct)} style:background={pctColor(commodities.gold.changePct)}></span>
+                {fmtPct(commodities.gold.changePct)}
+              </span>
+            </li>
+          {/if}
+          {#if commodities.oil}
+            <li class="macro-row">
+              <span class="macro-l">WTI Oil</span>
+              <span class="macro-v">${fmtNum(commodities.oil.price, 2)}</span>
+              <span class="row-spark" aria-hidden="true">
+                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
+                  <path d={rowSparkArea(commodities.oil.spark)} fill={rowSparkColor(commodities.oil.spark)} fill-opacity="0.12" />
+                  <path d={rowSparkPath(commodities.oil.spark)} stroke={rowSparkColor(commodities.oil.spark)} stroke-width="1.2" fill="none" />
+                </svg>
+              </span>
+              <span class="macro-c" style:color={pctColor(commodities.oil.changePct)}>
+                <span class="delta-bar" style:width={deltaBarWidth(commodities.oil.changePct)} style:background={pctColor(commodities.oil.changePct)}></span>
+                {fmtPct(commodities.oil.changePct)}
+              </span>
+            </li>
+          {/if}
+          {#if commodities.silver}
+            <li class="macro-row">
+              <span class="macro-l">Silver</span>
+              <span class="macro-v">${fmtNum(commodities.silver.price, 2)}</span>
+              <span class="row-spark" aria-hidden="true">
+                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
+                  <path d={rowSparkArea(commodities.silver.spark)} fill={rowSparkColor(commodities.silver.spark)} fill-opacity="0.12" />
+                  <path d={rowSparkPath(commodities.silver.spark)} stroke={rowSparkColor(commodities.silver.spark)} stroke-width="1.2" fill="none" />
+                </svg>
+              </span>
+              <span class="macro-c" style:color={pctColor(commodities.silver.changePct)}>
+                <span class="delta-bar" style:width={deltaBarWidth(commodities.silver.changePct)} style:background={pctColor(commodities.silver.changePct)}></span>
+                {fmtPct(commodities.silver.changePct)}
+              </span>
+            </li>
+          {/if}
+          {#if commodities.copper}
+            <li class="macro-row">
+              <span class="macro-l">Copper</span>
+              <span class="macro-v">${fmtNum(commodities.copper.price, 3)}</span>
+              <span class="row-spark" aria-hidden="true">
+                <svg viewBox="0 0 64 18" preserveAspectRatio="none">
+                  <path d={rowSparkArea(commodities.copper.spark)} fill={rowSparkColor(commodities.copper.spark)} fill-opacity="0.12" />
+                  <path d={rowSparkPath(commodities.copper.spark)} stroke={rowSparkColor(commodities.copper.spark)} stroke-width="1.2" fill="none" />
+                </svg>
+              </span>
+              <span class="macro-c" style:color={pctColor(commodities.copper.changePct)}>
+                <span class="delta-bar" style:width={deltaBarWidth(commodities.copper.changePct)} style:background={pctColor(commodities.copper.changePct)}></span>
+                {fmtPct(commodities.copper.changePct)}
+              </span>
+            </li>
+          {/if}
+        </ul>
+      {:else}
+        <div class="skel-rows">
+          {#each [72, 55, 90, 68] as w}
+            <span class="skel-line" style:width="{w}%"></span>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <!-- Card: US Stocks (MAG7 + SPX) -->
+    <section class="card card-us-stocks" aria-label="US equities">
+      <div class="card-h">
+        <span class="card-title">US Equities</span>
+        <span class="card-meta">
+          <span class="src-chip">Yahoo Finance</span>
+          <span class="card-sub">MAG7 · SPX · NDX</span>
+        </span>
+      </div>
+      {#if usStocks.length > 0 || macroPulse?.spx?.price != null}
+        <ul class="macro-list">
+          {#if macroPulse?.spx?.price != null}
+            <li class="macro-row">
+              <span class="macro-l">SPX</span>
+              <span class="macro-v">{fmtNum(macroPulse.spx.price, 0)}</span>
+              <span class="macro-c" style:color={pctColor(macroPulse.spx.changePct)}>{fmtPct(macroPulse.spx.changePct)}</span>
+            </li>
+          {/if}
+          {#each usStocks.slice(0, 7) as s (s.symbol)}
+            {#if isUsableMarketQuote(s)}
+              <li class="macro-row">
+                <span class="macro-l">{s.symbol}</span>
+                <span class="macro-v">${fmtPrice(s.price)}</span>
+                <span class="row-spark" aria-hidden="true">
+                  <svg viewBox="0 0 64 18" preserveAspectRatio="none">
+                    <path d={rowSparkArea(s.spark)} fill={rowSparkColor(s.spark)} fill-opacity="0.12" />
+                    <path d={rowSparkPath(s.spark)} stroke={rowSparkColor(s.spark)} stroke-width="1.2" fill="none" />
+                  </svg>
+                </span>
+                <span class="macro-c" style:color={pctColor(s.changePct)}>
+                  <span class="delta-bar" style:width={deltaBarWidth(s.changePct)} style:background={pctColor(s.changePct)}></span>
+                  {guardedPct(s)}
+                </span>
+              </li>
+            {/if}
+          {/each}
+        </ul>
+      {:else}
+        <div class="skel-rows">
+          {#each [72, 55, 90, 68, 80, 60, 75, 50] as w}
+            <span class="skel-line" style:width="{w}%"></span>
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <!-- Card: BTC Options — always visible, shows skeleton until deep data loads -->
+    <section class="card card-options" aria-label="BTC options">
+      <div class="card-h">
+        <span class="card-title">BTC Options</span>
+        <span class="card-meta">
+          <span class="src-chip">Deribit</span>
+          <span class="card-sub">PCR · Skew · Max Pain</span>
+        </span>
+      </div>
+      {#if options && (options.putCallRatioOi != null || options.putCallRatioVol != null)}
         <div class="market-grid">
-          {#if options.putCallRatioOi != null}
-            <div class="metric">
-              <div class="metric-l">PCR (OI)</div>
-              <div class="metric-v">{options.putCallRatioOi.toFixed(2)}</div>
-            </div>
-          {/if}
-          {#if options.putCallRatioVol != null}
-            <div class="metric">
-              <div class="metric-l">PCR (Vol)</div>
-              <div class="metric-v">{options.putCallRatioVol.toFixed(2)}</div>
-            </div>
-          {/if}
+          <div class="metric">
+            <div class="metric-l">PCR (OI)</div>
+            <div class="metric-v">{options.putCallRatioOi != null ? options.putCallRatioOi.toFixed(2) : '—'}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-l">PCR (Vol)</div>
+            <div class="metric-v">{options.putCallRatioVol != null ? options.putCallRatioVol.toFixed(2) : '—'}</div>
+          </div>
           {#if options.skew25d != null}
             <div class="metric">
               <div class="metric-l">25Δ Skew</div>
@@ -1481,34 +1678,25 @@
             </div>
           {/if}
         </div>
-      </section>
-    {:else if deepStatus === 'loading'}
-      <section class="card card-options" aria-label="BTC options">
-        <div class="card-h">
-          <span class="card-title">BTC Options</span>
-          <span class="card-meta">
-            <span class="src-chip">Deribit</span>
-            <span class="card-sub">Loading extended context</span>
-          </span>
-        </div>
+      {:else}
         <div class="skel-rows">
           {#each [75, 55, 85, 60] as w}
             <span class="skel-line" style:width="{w}%"></span>
           {/each}
         </div>
-      </section>
-    {/if}
+      {/if}
+    </section>
 
-    <!-- Card: Onchain (CryptoQuant) -->
-    {#if onchain?.onchainMetrics}
-      <section class="card card-onchain" aria-label="Onchain metrics">
-        <div class="card-h">
-          <span class="card-title">Onchain BTC</span>
-          <span class="card-meta">
-            <span class="src-chip">CryptoQuant</span>
-            <span class="card-sub">MVRV · NUPL · SOPR</span>
-          </span>
-        </div>
+    <!-- Card: Onchain (CryptoQuant) — always visible -->
+    <section class="card card-onchain" aria-label="Onchain metrics">
+      <div class="card-h">
+        <span class="card-title">Onchain BTC</span>
+        <span class="card-meta">
+          <span class="src-chip">CryptoQuant</span>
+          <span class="card-sub">MVRV · NUPL · SOPR</span>
+        </span>
+      </div>
+      {#if onchain?.onchainMetrics}
         <div class="market-grid">
           {#if onchain.onchainMetrics.mvrv != null}
             <div class="metric">
@@ -1535,34 +1723,25 @@
             </div>
           {/if}
         </div>
-      </section>
-    {:else if deepStatus === 'loading'}
-      <section class="card card-onchain" aria-label="Onchain metrics">
-        <div class="card-h">
-          <span class="card-title">Onchain BTC</span>
-          <span class="card-meta">
-            <span class="src-chip">CryptoQuant</span>
-            <span class="card-sub">Loading extended context</span>
-          </span>
-        </div>
+      {:else}
         <div class="skel-rows">
           {#each [75, 55, 85, 60] as w}
             <span class="skel-line" style:width="{w}%"></span>
           {/each}
         </div>
-      </section>
-    {/if}
+      {/if}
+    </section>
 
-    <!-- Card: Multi-exchange venue funding -->
-    {#if venueFunding}
-      <section class="card card-venue-funding" aria-label="Multi-exchange funding rates">
-        <div class="card-h">
-          <span class="card-title">Venue Funding</span>
-          <span class="card-meta">
-            <span class="src-chip">Binance · Bybit · OKX</span>
-            <span class="card-sub">BTC perp spread comparison</span>
-          </span>
-        </div>
+    <!-- Card: Multi-exchange venue funding — always visible -->
+    <section class="card card-venue-funding" aria-label="Multi-exchange funding rates">
+      <div class="card-h">
+        <span class="card-title">Venue Funding</span>
+        <span class="card-meta">
+          <span class="src-chip">Binance · Bybit · OKX</span>
+          <span class="card-sub">BTC perp spread comparison</span>
+        </span>
+      </div>
+      {#if venueFunding}
         <div class="market-grid">
           {#if venueFunding.binance != null}
             <div class="metric">
@@ -1593,20 +1772,14 @@
             </div>
           {/if}
         </div>
-      </section>
-    {:else if deepStatus === 'loading'}
-      <section class="card card-venue-funding" aria-label="Multi-exchange funding rates">
-        <div class="card-h">
-          <span class="card-title">Venue Funding</span>
-          <span class="card-meta"><span class="src-chip">Binance · Bybit · OKX</span></span>
-        </div>
+      {:else}
         <div class="skel-rows">
           {#each [75, 55, 85, 60] as w}
             <span class="skel-line" style:width="{w}%"></span>
           {/each}
         </div>
-      </section>
-    {/if}
+      {/if}
+    </section>
 
     <!-- Card: Market events (DERIV/WHALE/LIQ) -->
     <section class="card card-events" aria-label="Market events">
@@ -1681,16 +1854,16 @@
       {/if}
     </section>
 
-    <!-- Card: Whale positions -->
-    {#if whales.length > 0}
-      <section class="card card-whales" aria-label="Whale positions">
-        <div class="card-h">
-          <span class="card-title">Whale Positions</span>
-          <span class="card-meta">
-            <span class="src-chip">Hyperliquid</span>
-            <span class="card-sub">Top traders · 30d PnL</span>
-          </span>
-        </div>
+    <!-- Card: Whale positions — always visible -->
+    <section class="card card-whales" aria-label="Whale positions">
+      <div class="card-h">
+        <span class="card-title">Whale Positions</span>
+        <span class="card-meta">
+          <span class="src-chip">Hyperliquid</span>
+          <span class="card-sub">Top traders · 30d PnL</span>
+        </span>
+      </div>
+      {#if whales.length > 0}
         <ul class="whale-list">
           {#each whales as w (w.address ?? w.addressFull)}
             <li class="whale-row">
@@ -1701,23 +1874,14 @@
             </li>
           {/each}
         </ul>
-      </section>
-    {:else if deepStatus === 'loading'}
-      <section class="card card-whales" aria-label="Whale positions">
-        <div class="card-h">
-          <span class="card-title">Whale Positions</span>
-          <span class="card-meta">
-            <span class="src-chip">Hyperliquid</span>
-            <span class="card-sub">Loading extended context</span>
-          </span>
-        </div>
+      {:else}
         <div class="skel-rows">
           {#each [75, 55, 85, 60] as w}
             <span class="skel-line" style:width="{w}%"></span>
           {/each}
         </div>
-      </section>
-    {/if}
+      {/if}
+    </section>
 
     <!-- Card: Trending (DEX hot) -->
     <section class="card card-trending" aria-label="Trending tokens">
@@ -2048,12 +2212,21 @@
        retain the responsive clamp for breathing room on data-dense cards. */
     padding: 6px clamp(16px, 2.8vw, 28px) clamp(16px, 2.8vw, 28px);
     color: var(--d-text);
+    background: transparent;
+    min-height: 100vh;
+    font-family: var(--sc-font-body, 'Inter', system-ui, sans-serif);
+    position: relative;
+  }
+  .page::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
     background:
       radial-gradient(circle at 88% 10%, rgba(249, 216, 194, 0.04), transparent 22%),
       radial-gradient(circle at 6% 88%, rgba(255, 127, 133, 0.03), transparent 24%),
-      var(--d-bg);
-    min-height: 100vh;
-    font-family: var(--sc-font-body, 'Inter', system-ui, sans-serif);
+      #0a0807;
+    pointer-events: none;
   }
 
   /* SubRail in-page anchor targets — leave room for the 32px AppTopBar
@@ -2395,7 +2568,10 @@
   .card-onchain,
   .card-venue-funding,
   .card-whales,
-  .card-trending {
+  .card-trending,
+  .card-commodities,
+  .card-us-stocks,
+  .card-kr-stocks {
     grid-column: span 2;
   }
   .card-news {
@@ -3053,7 +3229,8 @@
   @media (max-width: 600px) {
     .grid { grid-template-columns: 1fr; }
     .card-patterns, .card-news, .card-stocks, .card-calendar, .card-events,
-    .card-options, .card-onchain, .card-venue-funding, .card-whales, .card-trending, .card-crypto {
+    .card-options, .card-onchain, .card-venue-funding, .card-whales, .card-trending, .card-crypto,
+    .card-commodities, .card-us-stocks, .card-kr-stocks {
       grid-column: span 1;
     }
     .card-news { grid-column: 1 / -1; }

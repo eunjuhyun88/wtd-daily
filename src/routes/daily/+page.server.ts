@@ -265,6 +265,9 @@ export const load: PageServerLoad = async ({ fetch, setHeaders }) => {
     confluence,
     fomc,
     tokenUnlocks,
+    krIndices,
+    usStocks,
+    commodities,
   ] = await Promise.all([
     safeJson<FearGreedResponse>(fetch, '/api/feargreed?limit=14', {}, 1_500),
     safeJson<MacroIndicatorsResponse>(fetch, '/api/macro/indicators', {}, 1_800),
@@ -273,6 +276,9 @@ export const load: PageServerLoad = async ({ fetch, setHeaders }) => {
     safeJson<ConfluenceResponse>(fetch, '/api/confluence/current?symbol=BTCUSDT&tf=4h', {}, 2_000),
     safeJson<FomcResponse>(fetch, '/api/macro/fomc', {}, 1_800),
     safeJson<TokenUnlocksResponse>(fetch, '/api/calendar/token-unlocks', {}, 1_800),
+    safeJson<KrIndicesResponse>(fetch, '/api/macro/kr-indices', {}, 1_800),
+    safeJson<UsStocksResponse>(fetch, '/api/macro/us-stocks', {}, 1_800),
+    safeJson<CommoditiesResponse>(fetch, '/api/macro/commodities', {}, 1_800),
   ]);
 
   // Public CDN cache: 60s fresh, 5min stale-while-revalidate.
@@ -288,6 +294,9 @@ export const load: PageServerLoad = async ({ fetch, setHeaders }) => {
     confluence,
     fomc,
     tokenUnlocks,
+    krIndices,
+    usStocks,
+    commodities,
     generatedAt: Date.now(),
   };
 };
